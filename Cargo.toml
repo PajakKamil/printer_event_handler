@@ -1,0 +1,13 @@
+[package]
+name = "printer_event_handler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros"] }
+log = "0.4.27"
+env_logger = "0.11.8"
+
+[target.'cfg(windows)'.dependencies]
+wmi = "0.17.2"
