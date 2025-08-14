@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Windows printer event monitoring application written in Rust. The project uses WMI (Windows Management Instrumentation) to query and monitor printer status and events on Windows systems.
+This is a Windows printer event monitoring library and CLI application written in Rust. The project is structured as a reusable library crate that provides printer monitoring functionality through WMI (Windows Management Instrumentation), along with a command-line interface for direct usage.
 
 ## Development Commands
 
@@ -13,9 +13,22 @@ This is a Windows printer event monitoring application written in Rust. The proj
 cargo build
 ```
 
-### Run
+### Run CLI
 ```bash
+# List all printers
 cargo run
+
+# Monitor specific printer
+cargo run -- "Printer Name"
+```
+
+### Run with binary name
+```bash
+# List all printers
+cargo run --bin printer_monitor
+
+# Monitor specific printer  
+cargo run --bin printer_monitor -- "Printer Name"
 ```
 
 ### Development build (debug)
@@ -50,25 +63,89 @@ cargo clippy
 
 ## Architecture
 
-The application is structured as a simple async Rust application with the following key components:
+The project is structured as a library crate with both library and binary targets:
 
-- **WMI Integration**: Uses the `wmi` crate to interface with Windows Management Instrumentation for printer queries
-- **Windows API**: Leverages Windows crate for direct Win32 printing APIs (`EnumPrintersW`, `GetPrinterW`)
-- **Async Runtime**: Built on Tokio for asynchronous operations
-- **Data Structures**: Defines `Win32_Printer` struct to represent printer information from WMI queries
+### Library Structure
+- **src/lib.rs**: Main library entry point with public API
+- **src/error.rs**: Custom error types (`PrinterError`) with proper error handling
+- **src/printer.rs**: Core printer data structures (`Printer`, `PrinterStatus`, `ErrorState`)
+- **src/monitor.rs**: Printer monitoring functionality (`PrinterMonitor`)
+- **src/main.rs**: CLI application that uses the library
+
+### Key Components
+- **WMI Integration**: Uses the `wmi` crate to interface with Windows Management Instrumentation
+- **Async Runtime**: Built on Tokio for asynchronous operations and monitoring
+- **Type Safety**: Strong typing with custom enums for printer status and error states
+- **Error Handling**: Comprehensive error handling with custom `PrinterError` type
+- **Platform Safety**: Windows-only compilation guards using `#[cfg(windows)]`
 
 ### Key Dependencies
 
-- `wmi`: Windows Management Instrumentation interface
-- `windows`: Win32 API bindings for direct printer enumeration
+- `wmi`: Windows Management Instrumentation interface (Windows only)
 - `tokio`: Async runtime with full features
-- `serde_json`: JSON serialization support
+- `serde`: Serialization support with derive features
 - `log`/`env_logger`: Logging infrastructure
-- `thiserror`/`anyhow`: Error handling
+- `chrono`: Date/time handling for timestamps
 
-### Current Implementation
+## Library Usage
 
-The application provides two main modes of operation:
+### As a Library Dependency
+
+Add to your `Cargo.toml`:
+```toml
+[dependencies]
+printer_event_handler = { path = "../printer_event_handler" }
+# or from crates.io when published:
+# printer_event_handler = "0.1.0"
+```
+
+### Library API
+
+```rust
+use printer_event_handler::{PrinterMonitor, PrinterError, Printer};
+
+#[tokio::main]
+async fn main() -> Result<(), PrinterError> {
+    // Create a monitor instance
+    let monitor = PrinterMonitor::new().await?;
+    
+    // List all printers
+    let printers = monitor.list_printers().await?;
+    for printer in printers {
+        println!("Printer: {}", printer.name());
+        println!("Status: {}", printer.status_description());
+        println!("Has Error: {}", printer.has_error());
+    }
+    
+    // Find specific printer
+    if let Some(printer) = monitor.find_printer("My Printer").await? {
+        println!("Found printer: {}", printer.name());
+    }
+    
+    // Monitor printer with callback
+    monitor.monitor_printer("My Printer", 60, |current, previous| {
+        if let Some(prev) = previous {
+            if prev != current {
+                println!("Printer status changed!");
+            }
+        }
+    }).await?;
+    
+    Ok(())
+}
+```
+
+### Key Library Types
+
+- **`PrinterMonitor`**: Main entry point for printer operations
+- **`Printer`**: Represents a printer and its current state
+- **`PrinterStatus`**: Enum for printer status (Idle, Printing, Offline, etc.)
+- **`ErrorState`**: Enum for printer error conditions (NoError, Jammed, NoPaper, etc.)
+- **`PrinterError`**: Custom error type for all library operations
+
+## CLI Usage
+
+The CLI provides two main modes of operation:
 
 #### List Mode (default)
 When run without arguments, lists all printers on the system once:
@@ -79,26 +156,56 @@ cargo run
 #### Monitor Mode  
 When run with a printer name, monitors that specific printer every 60 seconds:
 ```bash
-cargo run "Printer Name"
+cargo run -- "Printer Name"
 ```
 
-### Key Functions
-
-- `check_printer_status()`: Queries all printers via WMI
-- `find_printer_by_name()`: Finds a specific printer by name (case-insensitive)
-- `monitor_printer_service()`: Continuously monitors a printer every 60 seconds
-- Status change detection with timestamped logging
-- Graceful error handling for missing printers
-
-### Usage Examples
+### CLI Examples
 
 ```bash
 # List all printers
 cargo run
 
 # Monitor HP printer
-cargo run "HPDC7777 (HP Smart Tank 580-590 series)"
+cargo run -- "HPDC7777 (HP Smart Tank 580-590 series)"
 
 # Monitor default PDF printer  
-cargo run "Microsoft Print to PDF"
+cargo run -- "Microsoft Print to PDF"
+
+# Using binary name explicitly
+cargo run --bin printer_monitor -- "My Printer"
 ```
+
+## Testing and Development
+
+### Running Tests
+```bash
+# Run all tests (unit tests, integration tests, doc tests)
+cargo test
+
+# Run only library tests
+cargo test --lib
+
+# Run tests with output
+cargo test -- --nocapture
+```
+
+### Building for Release
+```bash
+# Build optimized release version
+cargo build --release
+
+# The binary will be available at:
+# target/release/printer_monitor.exe (Windows)
+```
+
+### Publishing as a Crate
+
+When ready to publish to crates.io:
+1. Update version in `Cargo.toml`
+2. Add proper repository URL and description
+3. Run `cargo publish --dry-run` to test
+4. Run `cargo publish` to publish
+
+## Platform Support
+
+This library is **Windows-only** due to its dependency on WMI (Windows Management Instrumentation). On non-Windows platforms, the library will return `PrinterError::PlatformNotSupported` for all operations.
