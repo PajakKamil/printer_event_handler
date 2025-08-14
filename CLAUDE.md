@@ -68,9 +68,37 @@ The application is structured as a simple async Rust application with the follow
 
 ### Current Implementation
 
-The main functionality is in `src/main.rs` with a `monitor_windows_printers()` async function that:
-1. Establishes WMI connection
-2. Queries `Win32_Printer` WMI class
-3. Returns printer information including status, error state, and offline status
+The application provides two main modes of operation:
 
-The application is currently in early development with a placeholder main function.
+#### List Mode (default)
+When run without arguments, lists all printers on the system once:
+```bash
+cargo run
+```
+
+#### Monitor Mode  
+When run with a printer name, monitors that specific printer every 60 seconds:
+```bash
+cargo run "Printer Name"
+```
+
+### Key Functions
+
+- `check_printer_status()`: Queries all printers via WMI
+- `find_printer_by_name()`: Finds a specific printer by name (case-insensitive)
+- `monitor_printer_service()`: Continuously monitors a printer every 60 seconds
+- Status change detection with timestamped logging
+- Graceful error handling for missing printers
+
+### Usage Examples
+
+```bash
+# List all printers
+cargo run
+
+# Monitor HP printer
+cargo run "HPDC7777 (HP Smart Tank 580-590 series)"
+
+# Monitor default PDF printer  
+cargo run "Microsoft Print to PDF"
+```
