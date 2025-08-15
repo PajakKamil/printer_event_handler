@@ -1,7 +1,7 @@
 [package]
 name = "printer_event_handler"
-version = "0.1.0"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
 description = "A cross-platform printer status monitoring library for Windows and Linux"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/yourusername/printer_event_handler"
@@ -21,8 +21,8 @@ serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros", "time", "process", "fs"] }
 log = "0.4.27"
 env_logger = "0.11.8"
-chrono = { version = "0.4", features = ["serde"] }
-async-trait = "0.1"
+chrono = { version = "0.4.41", features = ["serde"] }
+async-trait = "0.1.89"
 
 [target.'cfg(windows)'.dependencies]
 wmi = "0.17.2"
