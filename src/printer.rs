@@ -27,6 +27,20 @@ impl PrinterStatus {
         }
     }
 
+    fn from_printer_state(state: u32) -> Self {
+        // PrinterState values from WMI Win32_Printer.PrinterState
+        match state {
+            1 => PrinterStatus::Other,
+            2 => PrinterStatus::Unknown, 
+            3 => PrinterStatus::Idle,
+            4 => PrinterStatus::Printing,
+            5 => PrinterStatus::Warmup,
+            6 => PrinterStatus::StoppedPrinting,
+            7 => PrinterStatus::Offline,
+            _ => PrinterStatus::StatusUnknown,
+        }
+    }
+
     /// Get a human-readable description of the printer status
     pub fn description(&self) -> &'static str {
         match self {
@@ -113,7 +127,7 @@ impl std::fmt::Display for ErrorState {
 /// Internal WMI printer representation
 #[cfg(windows)]
 #[derive(Deserialize, Debug)]
-pub(crate) struct Win32_Printer {
+pub(crate) struct Win32Printer {
     #[serde(rename = "Name")]
     pub name: Option<String>,
     #[serde(rename = "PrinterStatus")]
@@ -198,11 +212,20 @@ impl Printer {
 }
 
 #[cfg(windows)]
-impl From<Win32_Printer> for Printer {
-    fn from(wmi_printer: Win32_Printer) -> Self {
+impl From<Win32Printer> for Printer {
+    fn from(wmi_printer: Win32Printer) -> Self {
+        // Use PrinterState for more accurate status determination if available
+        let status = if let Some(printer_state) = wmi_printer.printer_state {
+            PrinterStatus::from_printer_state(printer_state)
+        } else {
+            PrinterStatus::from_u32(wmi_printer.printer_status)
+        };
+
         Self {
-            name: wmi_printer.name.unwrap_or_else(|| "Unknown Printer".to_string()),
-            status: PrinterStatus::from_u32(wmi_printer.printer_status),
+            name: wmi_printer
+                .name
+                .unwrap_or_else(|| "Unknown Printer".to_string()),
+            status,
             error_state: ErrorState::from_u32(wmi_printer.detected_error_state),
             is_offline: wmi_printer.work_offline.unwrap_or(false),
             is_default: wmi_printer.default.unwrap_or(false),

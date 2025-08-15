@@ -1,16 +1,19 @@
 //! # Printer Event Handler
 //!
-//! A Windows printer status monitoring library using WMI (Windows Management Instrumentation).
+//! A cross-platform printer status monitoring library for Windows and Linux systems.
 //! This library provides functionality to query printer status, monitor printer events, and
-//! track printer state changes on Windows systems.
+//! track printer state changes using platform-specific backends:
+//! - Windows: WMI (Windows Management Instrumentation)  
+//! - Linux: CUPS (Common Unix Printing System)
 //!
 //! ## Features
 //!
+//! - Cross-platform support (Windows and Linux)
 //! - Query all printers on the system
 //! - Monitor specific printers for status changes
 //! - Async/await support with Tokio
 //! - Detailed printer status and error state information
-//! - Windows-only with proper compilation guards
+//! - Platform-specific backends with unified API
 //!
 //! ## Example
 //!
@@ -32,13 +35,14 @@
 //! }
 //! ```
 
+pub mod backend;
 pub mod error;
 pub mod monitor;
 pub mod printer;
 
 pub use error::PrinterError;
 pub use monitor::PrinterMonitor;
-pub use printer::{Printer, PrinterStatus, ErrorState};
+pub use printer::{ErrorState, Printer, PrinterStatus};
 
 /// Result type used throughout the library
 pub type Result<T> = std::result::Result<T, PrinterError>;

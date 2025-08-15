@@ -5,9 +5,11 @@ use std::fmt;
 pub enum PrinterError {
     /// WMI connection or query failed
     WmiError(String),
+    /// CUPS connection or query failed
+    CupsError(String),
     /// Printer was not found
     PrinterNotFound(String),
-    /// Windows-only functionality used on non-Windows platform
+    /// Platform not supported
     PlatformNotSupported,
     /// General I/O error
     IoError(std::io::Error),
@@ -19,9 +21,10 @@ impl fmt::Display for PrinterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PrinterError::WmiError(msg) => write!(f, "WMI error: {}", msg),
+            PrinterError::CupsError(msg) => write!(f, "CUPS error: {}", msg),
             PrinterError::PrinterNotFound(name) => write!(f, "Printer '{}' not found", name),
             PrinterError::PlatformNotSupported => {
-                write!(f, "This functionality is only supported on Windows")
+                write!(f, "This platform is not supported")
             }
             PrinterError::IoError(err) => write!(f, "I/O error: {}", err),
             PrinterError::Other(msg) => write!(f, "{}", msg),

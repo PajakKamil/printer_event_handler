@@ -2,11 +2,11 @@
 name = "printer_event_handler"
 version = "0.1.0"
 edition = "2021"
-description = "A Windows printer status monitoring library using WMI"
+description = "A cross-platform printer status monitoring library for Windows and Linux"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/yourusername/printer_event_handler"
-keywords = ["windows", "printer", "wmi", "monitoring"]
-categories = ["os::windows-apis"]
+keywords = ["printer", "monitoring", "cups", "wmi", "cross-platform"]
+categories = ["os", "api-bindings"]
 
 [[bin]]
 name = "printer_monitor"
@@ -18,10 +18,12 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
-tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros", "time", "process", "fs"] }
 log = "0.4.27"
 env_logger = "0.11.8"
 chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 wmi = "0.17.2"
+

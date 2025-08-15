@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Windows printer event monitoring library and CLI application written in Rust. The project is structured as a reusable library crate that provides printer monitoring functionality through WMI (Windows Management Instrumentation), along with a command-line interface for direct usage.
+This is a cross-platform printer event monitoring library and CLI application written in Rust. The project is structured as a reusable library crate that provides printer monitoring functionality through platform-specific backends:
+
+- **Windows**: WMI (Windows Management Instrumentation)
+- **Linux**: CUPS (Common Unix Printing System) via system commands
+
+The library provides a unified API that works across both platforms, along with a command-line interface for direct usage.
 
 ## Development Commands
 
@@ -73,19 +78,32 @@ The project is structured as a library crate with both library and binary target
 - **src/main.rs**: CLI application that uses the library
 
 ### Key Components
-- **WMI Integration**: Uses the `wmi` crate to interface with Windows Management Instrumentation
+- **Cross-Platform Backend**: Unified trait-based abstraction for different platforms
+- **Windows Integration**: Uses the `wmi` crate to interface with Windows Management Instrumentation
+- **Linux Integration**: Uses CUPS system commands (`lpstat`) for printer detection and status monitoring
 - **Async Runtime**: Built on Tokio for asynchronous operations and monitoring
 - **Type Safety**: Strong typing with custom enums for printer status and error states
 - **Error Handling**: Comprehensive error handling with custom `PrinterError` type
-- **Platform Safety**: Windows-only compilation guards using `#[cfg(windows)]`
+- **Platform Detection**: Automatic backend selection based on target platform
 
 ### Key Dependencies
 
 - `wmi`: Windows Management Instrumentation interface (Windows only)
-- `tokio`: Async runtime with full features
+- `tokio`: Async runtime with full features (including process and fs for Linux)
+- `async-trait`: Async trait support for cross-platform backend abstraction
 - `serde`: Serialization support with derive features
 - `log`/`env_logger`: Logging infrastructure
 - `chrono`: Date/time handling for timestamps
+
+### Platform-Specific Requirements
+
+**Windows:**
+- No additional system requirements - uses built-in WMI
+
+**Linux:**
+- Recommended: CUPS installed (`sudo apt install cups-client` on Ubuntu/Debian)
+- Alternative: Basic printer detection via `/dev/lp0` and system files
+- Commands used: `lpstat`, `which` (typically pre-installed)
 
 ## Library Usage
 
@@ -208,4 +226,11 @@ When ready to publish to crates.io:
 
 ## Platform Support
 
-This library is **Windows-only** due to its dependency on WMI (Windows Management Instrumentation). On non-Windows platforms, the library will return `PrinterError::PlatformNotSupported` for all operations.
+This library supports **Windows and Linux** with platform-specific backends:
+
+- **Windows**: Uses WMI (Windows Management Instrumentation) for comprehensive printer information
+- **Linux**: Uses CUPS system commands (`lpstat`) and alternative detection methods
+- **Other platforms**: Will return `PrinterError::PlatformNotSupported`
+
+### Backend Selection
+The appropriate backend is automatically selected at compile time based on the target platform using Rust's conditional compilation features (`#[cfg(windows)]` and `#[cfg(unix)]`).
