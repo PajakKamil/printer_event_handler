@@ -2,6 +2,23 @@ use log::error;
 use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::env;
 
+/// Monitors a specific printer and displays status changes in the CLI.
+///
+/// This function implements the monitoring mode of the CLI application,
+/// continuously checking the specified printer every 60 seconds and
+/// displaying any status changes with timestamps.
+///
+/// # Arguments
+/// * `printer_name` - The name of the printer to monitor
+///
+/// # Returns
+/// * `Result<(), PrinterError>` - Ok if monitoring completes successfully, Err on failure
+///
+/// # Errors
+/// * `PrinterError::PrinterNotFound` - If the specified printer doesn't exist
+/// * `PrinterError::WmiError` - If WMI queries fail on Windows
+/// * `PrinterError::CupsError` - If CUPS queries fail on Linux
+/// * `PrinterError::PlatformNotSupported` - If running on an unsupported platform
 async fn monitor_printer_cli(printer_name: &str) -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
 
@@ -55,6 +72,20 @@ async fn monitor_printer_cli(printer_name: &str) -> Result<(), PrinterError> {
     Ok(())
 }
 
+/// Lists all printers on the system in a formatted CLI display.
+///
+/// This function implements the list mode of the CLI application,
+/// querying all available printers and displaying their current
+/// status information in a user-friendly format.
+///
+/// # Returns
+/// * `Result<(), PrinterError>` - Ok if listing completes successfully, Err on failure
+///
+/// # Errors
+/// * `PrinterError::WmiError` - If WMI queries fail on Windows
+/// * `PrinterError::CupsError` - If CUPS queries fail on Linux
+/// * `PrinterError::PlatformNotSupported` - If running on an unsupported platform
+/// * `PrinterError::IoError` - If there are system I/O issues
 async fn list_printers_cli() -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
     let printers = monitor.list_printers().await?;
@@ -84,6 +115,27 @@ async fn list_printers_cli() -> Result<(), PrinterError> {
     Ok(())
 }
 
+/// Main entry point for the printer monitoring CLI application.
+///
+/// This function handles command-line argument parsing and dispatches to
+/// either list mode (no arguments) or monitor mode (printer name provided).
+/// It also sets up logging and handles platform-specific error reporting.
+///
+/// # Command Line Usage
+/// * No arguments: Lists all printers once and exits
+/// * One argument: Monitors the named printer continuously
+///
+/// # Returns
+/// * `Result<(), Box<dyn std::error::Error>>` - Ok on successful completion, Err on failure
+///
+/// # Examples
+/// ```bash
+/// # List all printers
+/// cargo run
+///
+/// # Monitor a specific printer
+/// cargo run -- "HP LaserJet Pro"
+/// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();

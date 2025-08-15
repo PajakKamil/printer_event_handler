@@ -49,8 +49,6 @@ pub type Result<T> = std::result::Result<T, PrinterError>;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_library_compiles() {
         // Basic compilation test

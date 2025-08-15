@@ -1,3 +1,5 @@
+
+#[cfg(windows)]
 use serde::Deserialize;
 
 /// Represents a printer's status
@@ -14,7 +16,15 @@ pub enum PrinterStatus {
 }
 
 impl PrinterStatus {
-    fn from_u32(status: Option<u32>) -> Self {
+    /// Creates a PrinterStatus from a WMI status code.
+    ///
+    /// # Arguments
+    /// * `status` - Optional WMI printer status code
+    ///
+    /// # Returns
+    /// Corresponding PrinterStatus enum variant
+    #[cfg(windows)]
+    pub(crate) fn from_u32(status: Option<u32>) -> Self {
         match status {
             Some(1) => PrinterStatus::Other,
             Some(2) => PrinterStatus::Unknown,
@@ -27,7 +37,15 @@ impl PrinterStatus {
         }
     }
 
-    fn from_printer_state(state: u32) -> Self {
+    /// Creates a PrinterStatus from a WMI PrinterState value.
+    ///
+    /// # Arguments
+    /// * `state` - WMI Win32_Printer.PrinterState value
+    ///
+    /// # Returns
+    /// Corresponding PrinterStatus enum variant
+    #[cfg(windows)]
+    pub(crate) fn from_printer_state(state: u32) -> Self {
         // PrinterState values from WMI Win32_Printer.PrinterState
         match state {
             1 => PrinterStatus::Other,
@@ -41,7 +59,18 @@ impl PrinterStatus {
         }
     }
 
-    /// Get a human-readable description of the printer status
+    /// Returns a human-readable description of this printer status.
+    ///
+    /// # Returns
+    /// A static string describing the status (e.g., "Idle", "Printing", "Offline")
+    ///
+    /// # Example
+    /// ```
+    /// use printer_event_handler::PrinterStatus;
+    ///
+    /// let status = PrinterStatus::Printing;
+    /// assert_eq!(status.description(), "Printing");
+    /// ```
     pub fn description(&self) -> &'static str {
         match self {
             PrinterStatus::Other => "Other",
@@ -57,6 +86,13 @@ impl PrinterStatus {
 }
 
 impl std::fmt::Display for PrinterStatus {
+    /// Formats the PrinterStatus for display.
+    ///
+    /// # Arguments
+    /// * `f` - Formatter instance
+    ///
+    /// # Returns
+    /// Result of the formatting operation
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.description())
     }
@@ -79,7 +115,15 @@ pub enum ErrorState {
 }
 
 impl ErrorState {
-    fn from_u32(error: Option<u32>) -> Self {
+    /// Creates an ErrorState from a WMI error code.
+    ///
+    /// # Arguments
+    /// * `error` - Optional WMI detected error state code
+    ///
+    /// # Returns
+    /// Corresponding ErrorState enum variant
+    #[cfg(windows)]
+    pub(crate) fn from_u32(error: Option<u32>) -> Self {
         match error {
             Some(0) | Some(2) => ErrorState::NoError,
             Some(1) => ErrorState::Other,
@@ -95,7 +139,18 @@ impl ErrorState {
         }
     }
 
-    /// Get a human-readable description of the error state
+    /// Returns a human-readable description of this error state.
+    ///
+    /// # Returns
+    /// A static string describing the error condition
+    ///
+    /// # Example
+    /// ```
+    /// use printer_event_handler::ErrorState;
+    ///
+    /// let error = ErrorState::NoPaper;
+    /// assert_eq!(error.description(), "No Paper");
+    /// ```
     pub fn description(&self) -> &'static str {
         match self {
             ErrorState::NoError => "No Error",
@@ -112,13 +167,31 @@ impl ErrorState {
         }
     }
 
-    /// Check if this represents an error condition
+    /// Determines whether this error state represents an actual error condition.
+    ///
+    /// # Returns
+    /// `true` if this represents an error that needs attention, `false` for normal operation
+    ///
+    /// # Example
+    /// ```
+    /// use printer_event_handler::ErrorState;
+    ///
+    /// assert!(!ErrorState::NoError.is_error());
+    /// assert!(ErrorState::Jammed.is_error());
+    /// ```
     pub fn is_error(&self) -> bool {
         !matches!(self, ErrorState::NoError)
     }
 }
 
 impl std::fmt::Display for ErrorState {
+    /// Formats the ErrorState for display.
+    ///
+    /// # Arguments
+    /// * `f` - Formatter instance
+    ///
+    /// # Returns
+    /// Result of the formatting operation
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.description())
     }
@@ -153,7 +226,30 @@ pub struct Printer {
 }
 
 impl Printer {
-    /// Create a new Printer instance
+    /// Creates a new Printer instance with the specified properties.
+    ///
+    /// # Arguments
+    /// * `name` - The printer's name as it appears in the system
+    /// * `status` - Current operational status of the printer
+    /// * `error_state` - Current error condition, if any
+    /// * `is_offline` - Whether the printer is currently offline
+    /// * `is_default` - Whether this is the system's default printer
+    ///
+    /// # Returns
+    /// A new Printer instance with the specified properties
+    ///
+    /// # Example
+    /// ```
+    /// use printer_event_handler::{Printer, PrinterStatus, ErrorState};
+    ///
+    /// let printer = Printer::new(
+    ///     "My Printer".to_string(),
+    ///     PrinterStatus::Idle,
+    ///     ErrorState::NoError,
+    ///     false,
+    ///     true,
+    /// );
+    /// ```
     pub fn new(
         name: String,
         status: PrinterStatus,
@@ -170,42 +266,69 @@ impl Printer {
         }
     }
 
-    /// Get the printer's name
+    /// Returns the printer's name as registered in the system.
+    ///
+    /// # Returns
+    /// A string slice containing the printer's name
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Get the printer's current status
+    /// Returns a reference to the printer's current operational status.
+    ///
+    /// # Returns
+    /// Reference to the printer's PrinterStatus
     pub fn status(&self) -> &PrinterStatus {
         &self.status
     }
 
-    /// Get a human-readable description of the printer's status
+    /// Returns a human-readable description of the printer's current status.
+    ///
+    /// # Returns
+    /// A static string describing the printer's status (e.g., "Idle", "Printing")
     pub fn status_description(&self) -> &'static str {
         self.status.description()
     }
 
-    /// Get the printer's error state
+    /// Returns a reference to the printer's current error state.
+    ///
+    /// # Returns
+    /// Reference to the printer's ErrorState
     pub fn error_state(&self) -> &ErrorState {
         &self.error_state
     }
 
-    /// Get a human-readable description of the printer's error state
+    /// Returns a human-readable description of the printer's current error state.
+    ///
+    /// # Returns
+    /// A static string describing the error state (e.g., "No Error", "Paper Jam")
     pub fn error_description(&self) -> &'static str {
         self.error_state.description()
     }
 
-    /// Check if the printer is currently offline
+    /// Checks whether the printer is currently offline or disconnected.
+    ///
+    /// # Returns
+    /// `true` if the printer is offline, `false` if it's online and available
     pub fn is_offline(&self) -> bool {
         self.is_offline
     }
 
-    /// Check if this is the default printer
+    /// Checks whether this printer is set as the system's default printer.
+    ///
+    /// # Returns
+    /// `true` if this is the default printer, `false` otherwise
     pub fn is_default(&self) -> bool {
         self.is_default
     }
 
-    /// Check if the printer has any error conditions
+    /// Checks whether the printer currently has any error conditions.
+    ///
+    /// This is a convenience method that checks if the error state indicates
+    /// any kind of problem with the printer.
+    ///
+    /// # Returns
+    /// `true` if the printer has an error condition, `false` if operating normally
     pub fn has_error(&self) -> bool {
         self.error_state.is_error()
     }
@@ -213,6 +336,17 @@ impl Printer {
 
 #[cfg(windows)]
 impl From<Win32Printer> for Printer {
+    /// Converts a WMI Win32_Printer object into a Printer instance.
+    ///
+    /// This implementation handles the conversion from Windows WMI printer data
+    /// to our unified Printer representation, mapping WMI-specific fields to
+    /// our cross-platform enum types.
+    ///
+    /// # Arguments
+    /// * `wmi_printer` - WMI printer data from Win32_Printer query
+    ///
+    /// # Returns
+    /// A Printer instance with data converted from WMI format
     fn from(wmi_printer: Win32Printer) -> Self {
         // Use PrinterState for more accurate status determination if available
         let status = if let Some(printer_state) = wmi_printer.printer_state {
@@ -234,6 +368,17 @@ impl From<Win32Printer> for Printer {
 }
 
 impl PartialEq for Printer {
+    /// Compares two Printer instances for equality.
+    ///
+    /// Two printers are considered equal if they have the same name, status,
+    /// error state, and offline status. The default printer flag is not
+    /// considered in equality comparison.
+    ///
+    /// # Arguments
+    /// * `other` - The other Printer to compare against
+    ///
+    /// # Returns
+    /// `true` if the printers are equivalent, `false` otherwise
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.status == other.status

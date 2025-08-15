@@ -18,6 +18,7 @@ pub enum PrinterError {
 }
 
 impl fmt::Display for PrinterError {
+    /// Formats the error for display to users
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PrinterError::WmiError(msg) => write!(f, "WMI error: {}", msg),
@@ -33,6 +34,7 @@ impl fmt::Display for PrinterError {
 }
 
 impl std::error::Error for PrinterError {
+    /// Returns the source of this error, if any
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             PrinterError::IoError(err) => Some(err),
@@ -42,6 +44,7 @@ impl std::error::Error for PrinterError {
 }
 
 impl From<std::io::Error> for PrinterError {
+    /// Converts std::io::Error into PrinterError
     fn from(err: std::io::Error) -> Self {
         PrinterError::IoError(err)
     }
@@ -49,12 +52,14 @@ impl From<std::io::Error> for PrinterError {
 
 #[cfg(windows)]
 impl From<wmi::WMIError> for PrinterError {
+    /// Converts WMI errors into PrinterError (Windows only)
     fn from(err: wmi::WMIError) -> Self {
         PrinterError::WmiError(err.to_string())
     }
 }
 
 impl From<Box<dyn std::error::Error>> for PrinterError {
+    /// Converts boxed errors into PrinterError
     fn from(err: Box<dyn std::error::Error>) -> Self {
         PrinterError::Other(err.to_string())
     }

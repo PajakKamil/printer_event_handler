@@ -1,4 +1,6 @@
-use crate::{Printer, PrinterError, Result};
+use crate::{Printer, Result};
+#[cfg(windows)]
+use crate::PrinterError;
 use async_trait::async_trait;
 
 /// Trait for platform-specific printer backend implementations
@@ -40,7 +42,7 @@ impl PrinterBackend for WindowsBackend {
         // Run WMI operations in a blocking task to avoid Send/Sync issues
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
             let com_con = COMLibrary::new().map_err(PrinterError::from)?;
-            let wmi_connection = wmi::WMIConnection::new(com_con.into()).map_err(PrinterError::from)?;
+            let wmi_connection = wmi::WMIConnection::new(com_con).map_err(PrinterError::from)?;
             let printers: Vec<Win32Printer> = wmi_connection.raw_query("SELECT Name, PrinterStatus, DetectedErrorState, WorkOffline, PrinterState, Default FROM Win32_Printer").map_err(PrinterError::from)?;
             Ok(printers)
         })
@@ -94,7 +96,6 @@ impl PrinterBackend for LinuxBackend {
     }
 
     async fn list_printers(&self) -> Result<Vec<Printer>> {
-        use crate::{ErrorState, PrinterStatus};
         use log::{info, warn};
         use tokio::process::Command;
 
@@ -225,7 +226,7 @@ async fn detect_printers_alternative() -> Result<Vec<Printer>> {
 
     // Check for USB printers in /sys/class/usb
     info!("Checking for USB printers in /sys/class/usb...");
-    if let Ok(entries) = fs::read_dir("/sys/class/usb").await {
+    if let Ok(_entries) = fs::read_dir("/sys/class/usb").await {
         // This is a basic implementation - in practice you'd need to parse USB device info
         // to identify printers by their device class
         info!("Found USB entries, but printer detection requires more complex parsing");
