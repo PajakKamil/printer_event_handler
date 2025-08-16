@@ -144,7 +144,7 @@ The crate also provides a command-line interface:
 cargo install printer_event_handler
 
 # Or run directly from source
-git clone https://github.com/yourusername/printer_event_handler
+git clone https://github.com/PajakKamil/printer_event_handler
 cd printer_event_handler
 ```
 
@@ -281,7 +281,7 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/printer_event_handler
+git clone https://github.com/PajakKamil/printer_event_handler
 cd printer_event_handler
 
 # Run tests
