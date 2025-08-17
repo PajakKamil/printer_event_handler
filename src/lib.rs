@@ -3,17 +3,20 @@
 //! A cross-platform printer status monitoring library for Windows and Linux systems.
 //! This library provides functionality to query printer status, monitor printer events, and
 //! track printer state changes using platform-specific backends:
-//! - Windows: WMI (Windows Management Instrumentation)  
-//! - Linux: CUPS (Common Unix Printing System)
+//! - **Windows**: WMI (Windows Management Instrumentation) with **complete Win32_Printer support**
+//!   - All 26 PrinterState values (0-25): Idle, Paused, Error, PaperJam, Busy, etc.
+//!   - All 12 DetectedErrorState values (0-11): NoError, NoPaper, Jammed, ServiceRequested, etc.
+//! - **Linux**: CUPS (Common Unix Printing System) with basic status detection
 //!
 //! ## Features
 //!
-//! - Cross-platform support (Windows and Linux)
-//! - Query all printers on the system
-//! - Monitor specific printers for status changes
-//! - Async/await support with Tokio
-//! - Detailed printer status and error state information
-//! - Platform-specific backends with unified API
+//! - **Comprehensive Windows support** - Full Win32_Printer coverage per Microsoft documentation
+//! - **Cross-platform support** (Windows and Linux)
+//! - **Real-time monitoring** - Query all printers on the system
+//! - **Status change detection** - Monitor specific printers for status changes
+//! - **Async/await support** with Tokio
+//! - **Detailed status information** - 26+ printer statuses and 11 error states
+//! - **Platform-specific backends** with unified API
 //!
 //! ## Example
 //!

@@ -1,6 +1,6 @@
-use crate::{Printer, Result};
 #[cfg(windows)]
 use crate::PrinterError;
+use crate::{Printer, Result};
 use async_trait::async_trait;
 
 /// Trait for platform-specific printer backend implementations
@@ -27,7 +27,7 @@ pub struct WindowsBackend;
 impl PrinterBackend for WindowsBackend {
     async fn new() -> Result<Self> {
         use log::info;
-        
+
         info!("Initializing Windows WMI backend...");
         Ok(Self)
     }
@@ -38,7 +38,7 @@ impl PrinterBackend for WindowsBackend {
         use wmi::COMLibrary;
 
         info!("Querying printer information via WMI...");
-        
+
         // Run WMI operations in a blocking task to avoid Send/Sync issues
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
             let com_con = COMLibrary::new().map_err(PrinterError::from)?;

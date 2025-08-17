@@ -1,8 +1,8 @@
-use crate::backend::{create_backend, PrinterBackend};
+use crate::backend::{PrinterBackend, create_backend};
 use crate::{Printer, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Printer monitoring and querying functionality
 pub struct PrinterMonitor {
@@ -139,8 +139,8 @@ impl PrinterMonitor {
     ///     monitor.monitor_printer("HP LaserJet", 30, |current, previous| {
     ///         if let Some(prev) = previous {
     ///             if prev != current {
-    ///                 println!("Status changed: {} -> {}", 
-    ///                     prev.status_description(), 
+    ///                 println!("Status changed: {} -> {}",
+    ///                     prev.status_description(),
     ///                     current.status_description());
     ///             }
     ///         } else {
@@ -233,7 +233,7 @@ impl PrinterMonitor {
     ///     let summary = monitor.printer_summary().await.unwrap();
     ///     
     ///     for (name, info) in summary {
-    ///         println!("{}: {} ({})", name, info.status, 
+    ///         println!("{}: {} ({})", name, info.status,
     ///             if info.has_error { "ERROR" } else { "OK" });
     ///     }
     /// }

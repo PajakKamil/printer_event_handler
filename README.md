@@ -166,12 +166,12 @@ Printer #1: HP LaserJet Pro MFP M428f
   Offline: No
   Default Printer: Yes
 
-Printer #2: Microsoft Print to PDF
-  Status: Idle
-  Error State: No Error
-  Offline: No
+Printer #2: HPDC7777 (HP Smart Tank 580-590 series)
+  Status: Offline
+  Error State: Service Requested
+  Offline: Yes
 
-Printer #3: Microsoft XPS Document Writer
+Printer #3: Microsoft Print to PDF
   Status: Idle
   Error State: No Error
   Offline: No
@@ -200,14 +200,19 @@ Press Ctrl+C to stop
   Status: Idle -> Printing
   Error State: No Error -> No Error
   Offline: No
+
+[2024-01-15 14:33:15] Printer 'HP LaserJet Pro' Status Changed:
+  Status: Printing -> Busy
+  Error State: No Error -> No Error
+  Offline: No
 ```
 
 ## Platform Support
 
-| Platform | Backend | Requirements |
-|----------|---------|--------------|
-| **Windows** | WMI (Windows Management Instrumentation) | None (built-in) |
-| **Linux** | CUPS (Common Unix Printing System) | `cups-client` package recommended |
+| Platform | Backend | Requirements | Coverage |
+|----------|---------|--------------|----------|
+| **Windows** | WMI (Windows Management Instrumentation) | None (built-in) | **Complete Win32_Printer support** - All 26 PrinterState values (0-25) and 12 DetectedErrorState values (0-11) https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer |
+| **Linux** | CUPS (Common Unix Printing System) | `cups-client` package recommended | Basic status detection (idle, printing, offline) with CUPS integration |
 
 ### Linux Setup
 
@@ -233,34 +238,64 @@ sudo yum install cups  # or dnf install cups-client
 
 ### Printer Status Values
 
+The library provides comprehensive support for all Win32_Printer states:
+
 ```rust
 pub enum PrinterStatus {
+    // Basic PrinterStatus values (1-7)
+    Other,          // Other status
+    Unknown,        // Unknown status  
     Idle,           // Ready to print
     Printing,       // Currently printing
-    Offline,        // Not available
-    Warmup,         // Starting up
+    Warmup,         // Starting up/warming up
     StoppedPrinting,// Stopped mid-job
-    Other,          // Other status
-    Unknown,        // Unknown status
+    Offline,        // Not available
+    
+    // Extended PrinterState values (0-25) - Full Win32_Printer support
+    Paused,         // Printer paused
+    Error,          // General error state
+    PendingDeletion,// Queued for deletion
+    PaperJam,       // Paper jam detected
+    PaperOut,       // Out of paper
+    ManualFeed,     // Manual feed required
+    PaperProblem,   // Paper-related issue
+    IOActive,       // I/O operations active
+    Busy,           // Printer busy
+    OutputBinFull,  // Output tray full
+    NotAvailable,   // Printer not available
+    Waiting,        // Waiting for job
+    Processing,     // Processing job
+    Initialization, // Initializing
+    TonerLow,       // Low toner/ink
+    NoToner,        // Out of toner/ink
+    PagePunt,       // Page punt condition
+    UserInterventionRequired, // User action needed
+    OutOfMemory,    // Memory full
+    DoorOpen,       // Cover/door open
+    ServerUnknown,  // Server status unknown
+    PowerSave,      // Power save mode
+    
     StatusUnknown,  // Could not determine
 }
 ```
 
 ### Error States
 
+Complete support for Win32_Printer DetectedErrorState values:
+
 ```rust
 pub enum ErrorState {
-    NoError,         // No issues
-    Jammed,          // Paper jam
-    NoPaper,         // Out of paper
-    NoToner,         // Out of toner/ink
-    DoorOpen,        // Cover/door open
-    OutputBinFull,   // Output tray full
-    ServiceRequested,// Needs maintenance
-    LowPaper,        // Low paper
-    LowToner,        // Low toner/ink
-    Other,           // Other error
-    UnknownError,    // Unknown error
+    NoError,         // No issues (values 0, 2)
+    Other,           // Other error (values 1, 9)
+    LowPaper,        // Low paper (value 3)
+    NoPaper,         // Out of paper (value 4)
+    LowToner,        // Low toner/ink (value 5)
+    NoToner,         // Out of toner/ink (value 6)
+    DoorOpen,        // Cover/door open (value 7)
+    Jammed,          // Paper jam (value 8)
+    ServiceRequested,// Needs maintenance (value 10)
+    OutputBinFull,   // Output tray full (value 11)
+    UnknownError,    // Unknown error state
 }
 ```
 
