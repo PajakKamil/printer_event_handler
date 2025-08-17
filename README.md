@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.0.0"
+printer_event_handler = "1.1.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
