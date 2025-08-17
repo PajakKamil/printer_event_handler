@@ -48,6 +48,7 @@ impl PrinterStatus {
     pub(crate) fn from_printer_state(state: u32) -> Self {
         // PrinterState values from WMI Win32_Printer.PrinterState
         match state {
+            0 => PrinterStatus::Idle, // 0 = Ready/Normal state
             1 => PrinterStatus::Other,
             2 => PrinterStatus::Unknown, 
             3 => PrinterStatus::Idle,
@@ -55,6 +56,7 @@ impl PrinterStatus {
             5 => PrinterStatus::Warmup,
             6 => PrinterStatus::StoppedPrinting,
             7 => PrinterStatus::Offline,
+            128 => PrinterStatus::Offline, // 128 = Offline state
             _ => PrinterStatus::StatusUnknown,
         }
     }
@@ -348,12 +350,23 @@ impl From<Win32Printer> for Printer {
     /// # Returns
     /// A Printer instance with data converted from WMI format
     fn from(wmi_printer: Win32Printer) -> Self {
-        // Use PrinterState for more accurate status determination if available
+        // Use PrinterState for more accurate status determination if available and valid,
+        // otherwise fall back to PrinterStatus
         let status = if let Some(printer_state) = wmi_printer.printer_state {
-            PrinterStatus::from_printer_state(printer_state)
+            let state_status = PrinterStatus::from_printer_state(printer_state);
+            // If PrinterState gives us an unknown status, try PrinterStatus as fallback
+            if matches!(state_status, PrinterStatus::StatusUnknown) {
+                PrinterStatus::from_u32(wmi_printer.printer_status)
+            } else {
+                state_status
+            }
         } else {
             PrinterStatus::from_u32(wmi_printer.printer_status)
         };
+
+        // Determine offline status from both WorkOffline field and printer status
+        let is_offline = wmi_printer.work_offline.unwrap_or(false) 
+            || matches!(status, PrinterStatus::Offline);
 
         Self {
             name: wmi_printer
@@ -361,7 +374,7 @@ impl From<Win32Printer> for Printer {
                 .unwrap_or_else(|| "Unknown Printer".to_string()),
             status,
             error_state: ErrorState::from_u32(wmi_printer.detected_error_state),
-            is_offline: wmi_printer.work_offline.unwrap_or(false),
+            is_offline,
             is_default: wmi_printer.default.unwrap_or(false),
         }
     }

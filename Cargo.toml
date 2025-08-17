@@ -1,10 +1,10 @@
 [package]
 name = "printer_event_handler"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "A cross-platform printer status monitoring library for Windows and Linux"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/printer_event_handler"
+repository = "https://github.com/PajakKamil/printer_event_handler"
 keywords = ["printer", "monitoring", "cups", "wmi", "cross-platform"]
 categories = ["os", "api-bindings"]
 
