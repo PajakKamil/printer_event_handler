@@ -1,0 +1,28 @@
+[package]
+name = "printer_event_handler_examples"
+version = "1.2.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "basic_listing"
+path = "basic_listing.rs"
+
+[[bin]]
+name = "monitor_changes"
+path = "monitor_changes.rs"
+
+[[bin]]
+name = "error_handling"
+path = "error_handling.rs"
+
+[[bin]]
+name = "async_patterns"
+path = "async_patterns.rs"
+
+[dependencies]
+printer_event_handler = { path = ".." }
+tokio = { version = "1.47.1", features = ["full"] }
+env_logger = "0.11.8"
+chrono = { version = "0.4.41", features = ["serde"] }
+futures = "0.3.31"  # Only needed for async_patterns example

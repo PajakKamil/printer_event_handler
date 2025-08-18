@@ -361,12 +361,26 @@ pub enum ErrorState {
 
 ## Examples
 
-Check out the [examples](examples/) directory for more usage patterns:
+Check out the [examples](examples/) directory for comprehensive usage patterns with complete WMI property access:
 
-- [`basic_listing.rs`](examples/basic_listing.rs) - List all printers
-- [`monitor_changes.rs`](examples/monitor_changes.rs) - Monitor status changes
-- [`error_handling.rs`](examples/error_handling.rs) - Proper error handling
-- [`async_patterns.rs`](examples/async_patterns.rs) - Advanced async usage
+- [`basic_listing.rs`](examples/basic_listing.rs) - List all printers with detailed WMI information
+- [`monitor_changes.rs`](examples/monitor_changes.rs) - Monitor status changes with WMI details
+- [`error_handling.rs`](examples/error_handling.rs) - Proper error handling and graceful degradation
+- [`async_patterns.rs`](examples/async_patterns.rs) - Advanced async usage and concurrent monitoring
+
+### Running Examples
+Examples have their own Cargo.toml to keep the main library lightweight:
+
+```bash
+cd examples
+cargo run --bin basic_listing
+cargo run --bin monitor_changes -- "Printer Name"
+```
+
+Or from the main directory:
+```bash
+cargo run --manifest-path examples/Cargo.toml --bin basic_listing
+```
 
 ## Contributing
 
