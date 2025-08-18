@@ -2,7 +2,7 @@
 use serde::Deserialize;
 
 /// Represents a printer's status (Win32_Printer.PrinterStatus - Current/Recommended)
-/// 
+///
 /// This is the current WMI property for printer status information.
 /// Values 1-7 according to Microsoft documentation.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,38 +18,38 @@ pub enum PrinterStatus {
 }
 
 /// Represents a printer's state (Win32_Printer.PrinterState - Obsolete/Deprecated)
-/// 
+///
 /// This is the obsolete WMI property. Use PrinterStatus when available.
 /// Values 0-25 according to Microsoft documentation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PrinterState {
-    Idle,                        // 0
-    Paused,                      // 1
-    Error,                       // 2
-    PendingDeletion,             // 3
-    PaperJam,                    // 4
-    PaperOut,                    // 5
-    ManualFeed,                  // 6
-    PaperProblem,                // 7
-    Offline,                     // 8
-    IOActive,                    // 9
-    Busy,                        // 10
-    Printing,                    // 11
-    OutputBinFull,               // 12
-    NotAvailable,                // 13
-    Waiting,                     // 14
-    Processing,                  // 15
-    Initialization,              // 16
-    Warmup,                      // 17
-    TonerLow,                    // 18
-    NoToner,                     // 19
-    PagePunt,                    // 20
-    UserInterventionRequired,    // 21
-    OutOfMemory,                 // 22
-    DoorOpen,                    // 23
-    ServerUnknown,               // 24
-    PowerSave,                   // 25
-    StateUnknown,                // Fallback for unmapped values
+    Idle,                     // 0
+    Paused,                   // 1
+    Error,                    // 2
+    PendingDeletion,          // 3
+    PaperJam,                 // 4
+    PaperOut,                 // 5
+    ManualFeed,               // 6
+    PaperProblem,             // 7
+    Offline,                  // 8
+    IOActive,                 // 9
+    Busy,                     // 10
+    Printing,                 // 11
+    OutputBinFull,            // 12
+    NotAvailable,             // 13
+    Waiting,                  // 14
+    Processing,               // 15
+    Initialization,           // 16
+    Warmup,                   // 17
+    TonerLow,                 // 18
+    NoToner,                  // 19
+    PagePunt,                 // 20
+    UserInterventionRequired, // 21
+    OutOfMemory,              // 22
+    DoorOpen,                 // 23
+    ServerUnknown,            // 24
+    PowerSave,                // 25
+    StateUnknown,             // Fallback for unmapped values
 }
 
 impl PrinterStatus {
@@ -112,34 +112,34 @@ impl PrinterState {
     pub(crate) fn from_u32(state: u32) -> Self {
         // PrinterState values from WMI Win32_Printer.PrinterState (obsolete property)
         match state {
-            0 => PrinterState::Idle,              // Idle
-            1 => PrinterState::Paused,            // Paused
-            2 => PrinterState::Error,             // Error
-            3 => PrinterState::PendingDeletion,   // Pending Deletion
-            4 => PrinterState::PaperJam,          // Paper Jam
-            5 => PrinterState::PaperOut,          // Paper Out
-            6 => PrinterState::ManualFeed,        // Manual Feed
-            7 => PrinterState::PaperProblem,      // Paper Problem
-            8 => PrinterState::Offline,           // Offline
-            9 => PrinterState::IOActive,          // I/O Active
-            10 => PrinterState::Busy,             // Busy
-            11 => PrinterState::Printing,         // Printing
-            12 => PrinterState::OutputBinFull,    // Output Bin Full
-            13 => PrinterState::NotAvailable,     // Not Available
-            14 => PrinterState::Waiting,          // Waiting
-            15 => PrinterState::Processing,       // Processing
-            16 => PrinterState::Initialization,   // Initialization
-            17 => PrinterState::Warmup,           // Warming Up
-            18 => PrinterState::TonerLow,         // Toner Low
-            19 => PrinterState::NoToner,          // No Toner
-            20 => PrinterState::PagePunt,         // Page Punt
+            0 => PrinterState::Idle,                      // Idle
+            1 => PrinterState::Paused,                    // Paused
+            2 => PrinterState::Error,                     // Error
+            3 => PrinterState::PendingDeletion,           // Pending Deletion
+            4 => PrinterState::PaperJam,                  // Paper Jam
+            5 => PrinterState::PaperOut,                  // Paper Out
+            6 => PrinterState::ManualFeed,                // Manual Feed
+            7 => PrinterState::PaperProblem,              // Paper Problem
+            8 => PrinterState::Offline,                   // Offline
+            9 => PrinterState::IOActive,                  // I/O Active
+            10 => PrinterState::Busy,                     // Busy
+            11 => PrinterState::Printing,                 // Printing
+            12 => PrinterState::OutputBinFull,            // Output Bin Full
+            13 => PrinterState::NotAvailable,             // Not Available
+            14 => PrinterState::Waiting,                  // Waiting
+            15 => PrinterState::Processing,               // Processing
+            16 => PrinterState::Initialization,           // Initialization
+            17 => PrinterState::Warmup,                   // Warming Up
+            18 => PrinterState::TonerLow,                 // Toner Low
+            19 => PrinterState::NoToner,                  // No Toner
+            20 => PrinterState::PagePunt,                 // Page Punt
             21 => PrinterState::UserInterventionRequired, // User Intervention Required
-            22 => PrinterState::OutOfMemory,      // Out of Memory
-            23 => PrinterState::DoorOpen,         // Door Open
-            24 => PrinterState::ServerUnknown,    // Server Unknown
-            25 => PrinterState::PowerSave,        // Power Save
-            128 => PrinterState::Offline,         // Legacy offline state
-            _ => PrinterState::StateUnknown,      // Unmapped values
+            22 => PrinterState::OutOfMemory,              // Out of Memory
+            23 => PrinterState::DoorOpen,                 // Door Open
+            24 => PrinterState::ServerUnknown,            // Server Unknown
+            25 => PrinterState::PowerSave,                // Power Save
+            128 => PrinterState::Offline,                 // Legacy offline state
+            _ => PrinterState::StateUnknown,              // Unmapped values
         }
     }
 
@@ -235,19 +235,19 @@ impl ErrorState {
         match error {
             // Note: In practice, many printers report 0 when working normally,
             // despite documentation saying 0=Unknown. We map 0 to NoError for better UX.
-            Some(0) => ErrorState::NoError,         // Unknown (but often means no error in practice)
-            Some(1) => ErrorState::Other,           // Other
-            Some(2) => ErrorState::NoError,         // No Error
-            Some(3) => ErrorState::LowPaper,        // Low Paper
-            Some(4) => ErrorState::NoPaper,         // No Paper
-            Some(5) => ErrorState::LowToner,        // Low Toner
-            Some(6) => ErrorState::NoToner,         // No Toner
-            Some(7) => ErrorState::DoorOpen,        // Door Open
-            Some(8) => ErrorState::Jammed,          // Jammed
-            Some(9) => ErrorState::Other,           // Offline (map to Other since we have separate offline status)
+            Some(0) => ErrorState::NoError, // Unknown (but often means no error in practice)
+            Some(1) => ErrorState::Other,   // Other
+            Some(2) => ErrorState::NoError, // No Error
+            Some(3) => ErrorState::LowPaper, // Low Paper
+            Some(4) => ErrorState::NoPaper, // No Paper
+            Some(5) => ErrorState::LowToner, // Low Toner
+            Some(6) => ErrorState::NoToner, // No Toner
+            Some(7) => ErrorState::DoorOpen, // Door Open
+            Some(8) => ErrorState::Jammed,  // Jammed
+            Some(9) => ErrorState::Other, // Offline (map to Other since we have separate offline status)
             Some(10) => ErrorState::ServiceRequested, // Service Requested
-            Some(11) => ErrorState::OutputBinFull,  // Output Bin Full
-            _ => ErrorState::UnknownError,          // Unmapped values
+            Some(11) => ErrorState::OutputBinFull, // Output Bin Full
+            _ => ErrorState::UnknownError, // Unmapped values
         }
     }
 
@@ -302,6 +302,18 @@ impl std::fmt::Display for ErrorState {
     }
 }
 
+/// WMI status codes for creating Printer instances
+#[cfg(windows)]
+#[derive(Debug)]
+pub struct WmiStatusCodes {
+    pub printer_status_code: Option<u32>,
+    pub printer_state_code: Option<u32>,
+    pub detected_error_state_code: Option<u32>,
+    pub extended_detected_error_state_code: Option<u32>,
+    pub extended_printer_status_code: Option<u32>,
+    pub wmi_status: Option<String>,
+}
+
 /// Internal WMI printer representation
 #[cfg(windows)]
 #[derive(Deserialize, Debug)]
@@ -335,14 +347,14 @@ pub struct Printer {
     error_state: ErrorState,
     is_offline: bool,
     is_default: bool,
-    
+
     // Raw WMI status codes for detailed analysis
-    printer_status_code: Option<u32>,          // PrinterStatus (1-7)
-    printer_state_code: Option<u32>,           // PrinterState (0-25, obsolete)
-    detected_error_state_code: Option<u32>,    // DetectedErrorState (0-11)
+    printer_status_code: Option<u32>,       // PrinterStatus (1-7)
+    printer_state_code: Option<u32>,        // PrinterState (0-25, obsolete)
+    detected_error_state_code: Option<u32>, // DetectedErrorState (0-11)
     extended_detected_error_state_code: Option<u32>, // ExtendedDetectedErrorState
     extended_printer_status_code: Option<u32>, // ExtendedPrinterStatus
-    wmi_status: Option<String>,                // Status property (OK, Degraded, etc.)
+    wmi_status: Option<String>,             // Status property (OK, Degraded, etc.)
 }
 
 impl Printer {
@@ -427,12 +439,7 @@ impl Printer {
         error_state: ErrorState,
         is_offline: bool,
         is_default: bool,
-        printer_status_code: Option<u32>,
-        printer_state_code: Option<u32>,
-        detected_error_state_code: Option<u32>,
-        extended_detected_error_state_code: Option<u32>,
-        extended_printer_status_code: Option<u32>,
-        wmi_status: Option<String>,
+        wmi_codes: WmiStatusCodes,
     ) -> Self {
         Self {
             name,
@@ -441,12 +448,12 @@ impl Printer {
             error_state,
             is_offline,
             is_default,
-            printer_status_code,
-            printer_state_code,
-            detected_error_state_code,
-            extended_detected_error_state_code,
-            extended_printer_status_code,
-            wmi_status,
+            printer_status_code: wmi_codes.printer_status_code,
+            printer_state_code: wmi_codes.printer_state_code,
+            detected_error_state_code: wmi_codes.detected_error_state_code,
+            extended_detected_error_state_code: wmi_codes.extended_detected_error_state_code,
+            extended_printer_status_code: wmi_codes.extended_printer_status_code,
+            wmi_status: wmi_codes.wmi_status,
         }
     }
 
@@ -496,44 +503,44 @@ impl Printer {
     }
 
     // Raw WMI Status Code Getters
-    
+
     /// Returns the raw PrinterStatus code (1-7, current/recommended property)
     pub fn printer_status_code(&self) -> Option<u32> {
         self.printer_status_code
     }
-    
+
     /// Returns the raw PrinterState code (0-25, obsolete property)
     pub fn printer_state_code(&self) -> Option<u32> {
         self.printer_state_code
     }
-    
+
     /// Returns the raw DetectedErrorState code (0-11)
     pub fn detected_error_state_code(&self) -> Option<u32> {
         self.detected_error_state_code
     }
-    
+
     /// Returns the raw ExtendedDetectedErrorState code
     pub fn extended_detected_error_state_code(&self) -> Option<u32> {
         self.extended_detected_error_state_code
     }
-    
+
     /// Returns the raw ExtendedPrinterStatus code
     pub fn extended_printer_status_code(&self) -> Option<u32> {
         self.extended_printer_status_code
     }
-    
+
     /// Returns the WMI Status property string (OK, Degraded, Error, etc.)
     pub fn wmi_status(&self) -> Option<&str> {
         self.wmi_status.as_deref()
     }
 
     // WMI Status Description Getters
-    
+
     /// Returns human-readable description of PrinterStatus code
     pub fn printer_status_description(&self) -> Option<&'static str> {
         self.printer_status_code.map(|code| match code {
             1 => "Other",
-            2 => "Unknown", 
+            2 => "Unknown",
             3 => "Idle",
             4 => "Printing",
             5 => "Warmup",
@@ -542,12 +549,12 @@ impl Printer {
             _ => "Unknown Status Code",
         })
     }
-    
+
     /// Returns human-readable description of PrinterState code (obsolete property)
     pub fn printer_state_description(&self) -> Option<&'static str> {
         self.printer_state_code.map(|code| match code {
             0 => "Idle",
-            1 => "Paused", 
+            1 => "Paused",
             2 => "Error",
             3 => "Pending Deletion",
             4 => "Paper Jam",
@@ -576,7 +583,7 @@ impl Printer {
             _ => "Unknown State Code",
         })
     }
-    
+
     /// Returns human-readable description of DetectedErrorState code
     pub fn detected_error_state_description(&self) -> Option<&'static str> {
         self.detected_error_state_code.map(|code| match code {
@@ -595,7 +602,7 @@ impl Printer {
             _ => "Unknown Error Code",
         })
     }
-    
+
     /// Returns human-readable description of ExtendedPrinterStatus code
     pub fn extended_printer_status_description(&self) -> Option<&'static str> {
         self.extended_printer_status_code.map(|code| match code {
@@ -604,7 +611,7 @@ impl Printer {
             3 => "Idle",
             4 => "Printing",
             5 => "Warmup",
-            6 => "Stopped Printing", 
+            6 => "Stopped Printing",
             7 => "Offline",
             8 => "Paused",
             9 => "Error",
@@ -628,10 +635,10 @@ impl From<Win32Printer> for Printer {
     fn from(wmi_printer: Win32Printer) -> Self {
         // First, try to get status from PrinterStatus (current/recommended property)
         let status = PrinterStatus::from_u32(wmi_printer.printer_status);
-        
+
         // Also get PrinterState (obsolete property) for additional detail if needed
         let state = wmi_printer.printer_state.map(PrinterState::from_u32);
-        
+
         // If PrinterStatus is unknown but we have PrinterState, try to convert
         let final_status = match (&status, &state) {
             (PrinterStatus::StatusUnknown, Some(ps)) => ps.to_printer_status(),
@@ -639,39 +646,41 @@ impl From<Win32Printer> for Printer {
         };
 
         // Determine offline status using multiple WMI properties for comprehensive detection
-        let is_offline = wmi_printer.work_offline.unwrap_or(false) 
+        let is_offline = wmi_printer.work_offline.unwrap_or(false)
             || matches!(final_status, PrinterStatus::Offline)
-            || state.as_ref().map_or(false, |s| matches!(s, 
-                PrinterState::Offline | 
-                PrinterState::Error | 
-                PrinterState::NotAvailable | 
+            || state.as_ref().is_some_and(|s| matches!(s,
+                PrinterState::Offline |
+                PrinterState::Error |
+                PrinterState::NotAvailable |
                 PrinterState::ServerUnknown
             ))
             // ExtendedPrinterStatus 7 = Offline
             || wmi_printer.extended_printer_status == Some(7)
             // Status property indicating problematic states
-            || wmi_printer.status.as_ref().map_or(false, |s| matches!(s.as_str(), 
+            || wmi_printer.status.as_ref().is_some_and(|s| matches!(s.as_str(),
                 "Degraded" | "Error" | "No Contact" | "Lost Comm" | "NonRecover"
             ));
 
-        Self {
-            name: wmi_printer
-                .name
-                .unwrap_or_else(|| "Unknown Printer".to_string()),
-            status: final_status,
-            state,
-            error_state: ErrorState::from_u32(wmi_printer.detected_error_state),
-            is_offline,
-            is_default: wmi_printer.default.unwrap_or(false),
-            
-            // Store all raw WMI status codes for detailed analysis
+        let wmi_codes = WmiStatusCodes {
             printer_status_code: wmi_printer.printer_status,
             printer_state_code: wmi_printer.printer_state,
             detected_error_state_code: wmi_printer.detected_error_state,
             extended_detected_error_state_code: wmi_printer.extended_detected_error_state,
             extended_printer_status_code: wmi_printer.extended_printer_status,
             wmi_status: wmi_printer.status,
-        }
+        };
+
+        Self::new_with_wmi(
+            wmi_printer
+                .name
+                .unwrap_or_else(|| "Unknown Printer".to_string()),
+            final_status,
+            state,
+            ErrorState::from_u32(wmi_printer.detected_error_state),
+            is_offline,
+            wmi_printer.default.unwrap_or(false),
+            wmi_codes,
+        )
     }
 }
 
@@ -735,7 +744,13 @@ mod tests {
     #[test]
     fn test_printer_state_to_status_conversion() {
         assert_eq!(PrinterState::Idle.to_printer_status(), PrinterStatus::Idle);
-        assert_eq!(PrinterState::Printing.to_printer_status(), PrinterStatus::Printing);
-        assert_eq!(PrinterState::PaperJam.to_printer_status(), PrinterStatus::StatusUnknown);
+        assert_eq!(
+            PrinterState::Printing.to_printer_status(),
+            PrinterStatus::Printing
+        );
+        assert_eq!(
+            PrinterState::PaperJam.to_printer_status(),
+            PrinterStatus::StatusUnknown
+        );
     }
 }

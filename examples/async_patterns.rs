@@ -9,7 +9,7 @@ use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio::time::interval;
 
 #[tokio::main]
@@ -54,13 +54,17 @@ async fn concurrent_monitoring() -> Result<(), PrinterError> {
         return Ok(());
     }
 
-    println!("   Starting concurrent monitoring of {} printers", printers.len());
+    println!(
+        "   Starting concurrent monitoring of {} printers",
+        printers.len()
+    );
 
     // Create concurrent monitoring tasks
     let mut tasks = Vec::new();
     let monitor_arc = Arc::new(monitor);
 
-    for printer in printers.iter().take(3) { // Limit to first 3 printers
+    for printer in printers.iter().take(3) {
+        // Limit to first 3 printers
         let monitor_clone = monitor_arc.clone();
         let printer_name = printer.name().to_string();
 
@@ -68,15 +72,18 @@ async fn concurrent_monitoring() -> Result<(), PrinterError> {
             let monitor = monitor_clone.clone();
             async move {
                 println!("   Starting monitor for: {}", printer_name);
-                
+
                 // Monitor this printer for a limited time
                 let result = tokio::time::timeout(
                     Duration::from_secs(15),
-                    monitor_single_printer(monitor, printer_name.clone())
-                ).await;
+                    monitor_single_printer(monitor, printer_name.clone()),
+                )
+                .await;
 
                 match result {
-                    Ok(Ok(_)) => println!("   Monitor for '{}' completed successfully", printer_name),
+                    Ok(Ok(_)) => {
+                        println!("   Monitor for '{}' completed successfully", printer_name)
+                    }
                     Ok(Err(e)) => println!("   Monitor for '{}' failed: {}", printer_name, e),
                     Err(_) => println!("   Monitor for '{}' timed out", printer_name),
                 }
@@ -97,7 +104,7 @@ async fn concurrent_monitoring() -> Result<(), PrinterError> {
 /// Helper function to monitor a single printer
 async fn monitor_single_printer(
     monitor: Arc<PrinterMonitor>,
-    printer_name: String
+    printer_name: String,
 ) -> Result<(), PrinterError> {
     let mut check_count = 0;
     let mut interval = interval(Duration::from_secs(3));
@@ -107,13 +114,14 @@ async fn monitor_single_printer(
         check_count += 1;
 
         if let Some(printer) = monitor.find_printer(&printer_name).await? {
-            println!("   [{}] Check #{}: Status={}, WMI Status={:?}", 
-                printer_name, 
-                check_count, 
+            println!(
+                "   [{}] Check #{}: Status={}, WMI Status={:?}",
+                printer_name,
+                check_count,
                 printer.status_description(),
                 printer.wmi_status().unwrap_or("Unknown")
             );
-            
+
             // Stop after 5 checks
             if check_count >= 5 {
                 break;
@@ -155,7 +163,8 @@ async fn streaming_updates() -> Result<(), PrinterError> {
                 interval.tick().await;
                 update_count += 1;
 
-                if update_count > 10 { // Stop after 10 updates
+                if update_count > 10 {
+                    // Stop after 10 updates
                     break;
                 }
 
@@ -195,7 +204,8 @@ async fn streaming_updates() -> Result<(), PrinterError> {
 
         while let Some(update) = rx.recv().await {
             update_count += 1;
-            println!("   Update #{}: [{}] {} - Status: {} (Code: {:?}) - WMI: {:?} - Offline: {}",
+            println!(
+                "   Update #{}: [{}] {} - Status: {} (Code: {:?}) - WMI: {:?} - Offline: {}",
                 update_count,
                 update.timestamp.format("%H:%M:%S"),
                 update.name,
@@ -243,7 +253,8 @@ async fn background_monitoring() -> Result<(), PrinterError> {
                 interval.tick().await;
                 iterations += 1;
 
-                if iterations > 8 { // Stop after 8 iterations
+                if iterations > 8 {
+                    // Stop after 8 iterations
                     break;
                 }
 
@@ -257,7 +268,8 @@ async fn background_monitoring() -> Result<(), PrinterError> {
                             let status_info = PrinterStatusInfo {
                                 status: printer.status_description().to_string(),
                                 printer_status_code: printer.printer_status_code(),
-                                extended_printer_status_code: printer.extended_printer_status_code(),
+                                extended_printer_status_code: printer
+                                    .extended_printer_status_code(),
                                 wmi_status: printer.wmi_status().map(String::from),
                                 is_offline: printer.is_offline(),
                                 last_updated: chrono::Utc::now(),
@@ -287,7 +299,8 @@ async fn background_monitoring() -> Result<(), PrinterError> {
                 interval.tick().await;
                 reads += 1;
 
-                if reads > 5 { // Stop after 5 reads
+                if reads > 5 {
+                    // Stop after 5 reads
                     break;
                 }
 
@@ -295,7 +308,8 @@ async fn background_monitoring() -> Result<(), PrinterError> {
                 let state = shared_state.read().await;
 
                 for (printer_name, status_info) in state.iter() {
-                    println!("      {}: {} (Updated: {})",
+                    println!(
+                        "      {}: {} (Updated: {})",
                         printer_name,
                         status_info.status,
                         status_info.last_updated.format("%H:%M:%S")
@@ -343,14 +357,15 @@ async fn concurrent_analysis() -> Result<(), PrinterError> {
     println!("   Analyzing {} printers concurrently", printers.len());
 
     // Create analysis tasks for each printer
-    let analysis_tasks: Vec<_> = printers.iter().map(|printer| {
-        let monitor = monitor.clone();
-        let printer_name = printer.name().to_string();
+    let analysis_tasks: Vec<_> = printers
+        .iter()
+        .map(|printer| {
+            let monitor = monitor.clone();
+            let printer_name = printer.name().to_string();
 
-        tokio::spawn(async move {
-            analyze_printer_detailed(monitor, printer_name).await
+            tokio::spawn(async move { analyze_printer_detailed(monitor, printer_name).await })
         })
-    }).collect();
+        .collect();
 
     // Execute all analyses concurrently and collect results
     let results = futures::future::join_all(analysis_tasks).await;
@@ -367,7 +382,10 @@ async fn concurrent_analysis() -> Result<(), PrinterError> {
                 if !analysis.detailed_status.is_empty() {
                     println!("      {}", analysis.detailed_status);
                 }
-                println!("      Name: {}, Health Score: {}%", analysis.name, analysis.health_score);
+                println!(
+                    "      Name: {}, Health Score: {}%",
+                    analysis.name, analysis.health_score
+                );
             }
             Ok(Err(e)) => {
                 failed_analyses += 1;
@@ -380,8 +398,10 @@ async fn concurrent_analysis() -> Result<(), PrinterError> {
         }
     }
 
-    println!("   Analysis Summary: {} successful, {} failed", 
-        successful_analyses, failed_analyses);
+    println!(
+        "   Analysis Summary: {} successful, {} failed",
+        successful_analyses, failed_analyses
+    );
 
     Ok(())
 }
@@ -389,7 +409,7 @@ async fn concurrent_analysis() -> Result<(), PrinterError> {
 /// Detailed printer analysis
 async fn analyze_printer_detailed(
     monitor: Arc<PrinterMonitor>,
-    printer_name: String
+    printer_name: String,
 ) -> Result<PrinterAnalysis, PrinterError> {
     // Simulate some analysis time
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -411,7 +431,7 @@ async fn analyze_printer_detailed(
         }
 
         let health_score = calculate_health_score(&printer);
-        
+
         Ok(PrinterAnalysis {
             name: printer_name.clone(),
             summary: format!("{} - Health: {}%", printer_name, health_score),
@@ -419,7 +439,10 @@ async fn analyze_printer_detailed(
             health_score,
         })
     } else {
-        Err(PrinterError::Other(format!("Printer '{}' not found", printer_name)))
+        Err(PrinterError::Other(format!(
+            "Printer '{}' not found",
+            printer_name
+        )))
     }
 }
 
@@ -438,7 +461,7 @@ fn calculate_health_score(printer: &printer_event_handler::Printer) -> u8 {
     // Check WMI status
     if let Some(wmi_status) = printer.wmi_status() {
         match wmi_status {
-            "OK" => {}, // No deduction
+            "OK" => {} // No deduction
             "Degraded" => score = score.saturating_sub(20),
             "Error" => score = score.saturating_sub(40),
             _ => score = score.saturating_sub(10),

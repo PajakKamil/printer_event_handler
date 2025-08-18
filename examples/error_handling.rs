@@ -20,7 +20,7 @@ async fn main() {
     match initialize_monitor().await {
         Ok(monitor) => {
             println!("   Monitor initialized successfully");
-            
+
             // Try to get printers with error handling
             match get_printers_safely(&monitor).await {
                 Ok(count) => println!("   Found {} printers", count),
@@ -69,16 +69,16 @@ async fn initialize_monitor() -> Result<PrinterMonitor, PrinterError> {
 /// Safely get printers with comprehensive error handling
 async fn get_printers_safely(monitor: &PrinterMonitor) -> Result<usize, PrinterError> {
     let printers = monitor.list_printers().await?;
-    
+
     // Validate printer data
     for printer in &printers {
         if printer.name().is_empty() {
             return Err(PrinterError::Other(
-                "Found printer with empty name".to_string()
+                "Found printer with empty name".to_string(),
             ));
         }
     }
-    
+
     Ok(printers.len())
 }
 
@@ -86,7 +86,7 @@ async fn get_printers_safely(monitor: &PrinterMonitor) -> Result<usize, PrinterE
 async fn retry_operation() -> Result<(), PrinterError> {
     const MAX_RETRIES: u32 = 3;
     let mut retry_count = 0;
-    
+
     loop {
         match attempt_operation().await {
             Ok(result) => {
@@ -98,10 +98,12 @@ async fn retry_operation() -> Result<(), PrinterError> {
                 if retry_count >= MAX_RETRIES {
                     return Err(e);
                 }
-                
+
                 let delay = Duration::from_millis(100 * 2_u64.pow(retry_count));
-                println!("   Attempt {} failed: {}. Retrying in {:?}...", 
-                    retry_count, e, delay);
+                println!(
+                    "   Attempt {} failed: {}. Retrying in {:?}...",
+                    retry_count, e, delay
+                );
                 tokio::time::sleep(delay).await;
             }
         }
@@ -112,11 +114,11 @@ async fn retry_operation() -> Result<(), PrinterError> {
 async fn attempt_operation() -> Result<String, PrinterError> {
     let monitor = PrinterMonitor::new().await?;
     let printers = monitor.list_printers().await?;
-    
+
     if printers.is_empty() {
         return Err(PrinterError::Other("No printers available".to_string()));
     }
-    
+
     Ok(format!("Found {} printers", printers.len()))
 }
 
@@ -125,33 +127,38 @@ async fn graceful_printer_analysis() {
     match PrinterMonitor::new().await {
         Ok(monitor) => {
             println!("   Monitor initialized");
-            
+
             // Try to get detailed printer information, fall back to basic info
             match monitor.list_printers().await {
                 Ok(printers) => {
                     println!("   Analyzing {} printers...", printers.len());
-                    
+
                     for printer in printers {
                         println!("      Printer: {}", printer.name());
-                        
+
                         // Basic information (always available)
                         println!("         Status: {}", printer.status_description());
-                        
+
                         // Try to get detailed WMI information (might fail)
                         if let Some(code) = printer.printer_status_code() {
                             if let Some(desc) = printer.printer_status_description() {
                                 println!("         PrinterStatus: {} ({})", code, desc);
                             } else {
-                                println!("         PrinterStatus: {} (description unavailable)", code);
+                                println!(
+                                    "         PrinterStatus: {} (description unavailable)",
+                                    code
+                                );
                             }
                         } else {
                             println!("         PrinterStatus: unavailable");
                         }
-                        
+
                         // Fallback to basic status if detailed info fails
                         match printer.wmi_status() {
                             Some(status) => println!("         WMI Status: {}", status),
-                            None => println!("         WMI Status: not available, using basic status"),
+                            None => {
+                                println!("         WMI Status: not available, using basic status")
+                            }
                         }
                     }
                 }
@@ -185,7 +192,7 @@ async fn handle_specific_errors() {
                 }
                 Err(e) => {
                     println!("   Error searching for printer: {}", e);
-                    
+
                     // Handle different error types
                     match e {
                         PrinterError::PlatformNotSupported => {
@@ -221,28 +228,32 @@ async fn handle_wmi_errors() {
     #[cfg(windows)]
     {
         println!("   Running Windows-specific WMI error handling...");
-        
+
         match PrinterMonitor::new().await {
             Ok(monitor) => {
                 match monitor.list_printers().await {
                     Ok(printers) => {
-                        println!("   WMI access successful, found {} printers", printers.len());
-                        
+                        println!(
+                            "   WMI access successful, found {} printers",
+                            printers.len()
+                        );
+
                         // Demonstrate accessing WMI properties with error handling
-                        for printer in printers.iter().take(1) { // Just check first printer
+                        for printer in printers.iter().take(1) {
+                            // Just check first printer
                             println!("      Checking WMI properties for: {}", printer.name());
-                            
+
                             // Check each WMI property with graceful handling
                             match printer.printer_status_code() {
                                 Some(code) => println!("         PrinterStatus: {}", code),
                                 None => println!("         PrinterStatus: unavailable"),
                             }
-                            
+
                             match printer.extended_printer_status_code() {
                                 Some(code) => println!("         ExtendedPrinterStatus: {}", code),
                                 None => println!("         ExtendedPrinterStatus: unavailable"),
                             }
-                            
+
                             match printer.wmi_status() {
                                 Some(status) => println!("         WMI Status: \"{}\"", status),
                                 None => println!("         WMI Status: unavailable"),
@@ -266,7 +277,7 @@ async fn handle_wmi_errors() {
             }
         }
     }
-    
+
     #[cfg(not(windows))]
     {
         println!("   WMI error handling is Windows-specific");

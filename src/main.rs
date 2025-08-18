@@ -107,34 +107,50 @@ async fn list_printers_cli() -> Result<(), PrinterError> {
             if printer.is_default() {
                 println!("  Default Printer: Yes");
             }
-            
+
             // Display all raw WMI status codes and descriptions
             println!("  --- Detailed WMI Information ---");
-            
+
             if let Some(code) = printer.printer_status_code() {
-                println!("  PrinterStatus: {} ({})", code, 
-                    printer.printer_status_description().unwrap_or("Unknown"));
+                println!(
+                    "  PrinterStatus: {} ({})",
+                    code,
+                    printer.printer_status_description().unwrap_or("Unknown")
+                );
             }
-            
+
             if let Some(code) = printer.printer_state_code() {
-                println!("  PrinterState: {} ({})", code,
-                    printer.printer_state_description().unwrap_or("Unknown"));
+                println!(
+                    "  PrinterState: {} ({})",
+                    code,
+                    printer.printer_state_description().unwrap_or("Unknown")
+                );
             }
-            
+
             if let Some(code) = printer.detected_error_state_code() {
-                println!("  DetectedErrorState: {} ({})", code,
-                    printer.detected_error_state_description().unwrap_or("Unknown"));
+                println!(
+                    "  DetectedErrorState: {} ({})",
+                    code,
+                    printer
+                        .detected_error_state_description()
+                        .unwrap_or("Unknown")
+                );
             }
-            
+
             if let Some(code) = printer.extended_printer_status_code() {
-                println!("  ExtendedPrinterStatus: {} ({})", code,
-                    printer.extended_printer_status_description().unwrap_or("Unknown"));
+                println!(
+                    "  ExtendedPrinterStatus: {} ({})",
+                    code,
+                    printer
+                        .extended_printer_status_description()
+                        .unwrap_or("Unknown")
+                );
             }
-            
+
             if let Some(code) = printer.extended_detected_error_state_code() {
                 println!("  ExtendedDetectedErrorState: {}", code);
             }
-            
+
             if let Some(status) = printer.wmi_status() {
                 println!("  WMI Status: {}", status);
             }
