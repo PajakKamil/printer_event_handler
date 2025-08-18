@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-01-18
+
+### Added
+
+#### Complete WMI Property Access
+- **Raw Status Code Getters** - Access all numeric WMI status codes:
+  - `printer_status_code()` → PrinterStatus (1-7, current/recommended property)
+  - `printer_state_code()` → PrinterState (0-25, obsolete property)
+  - `detected_error_state_code()` → DetectedErrorState (0-11)
+  - `extended_printer_status_code()` → ExtendedPrinterStatus 
+  - `extended_detected_error_state_code()` → ExtendedDetectedErrorState
+  - `wmi_status()` → Status property string ("OK", "Degraded", "Error", etc.)
+
+#### Human-Readable Description Methods
+- **Status Code Descriptions** - Get human-readable descriptions for all status codes:
+  - `printer_status_description()` → "Idle", "Printing", "Other", etc.
+  - `printer_state_description()` → "Paper Jam", "Toner Low", "Busy", etc.
+  - `detected_error_state_description()` → "No Paper", "Jammed", etc.
+  - `extended_printer_status_description()` → Extended status descriptions
+
+#### Enhanced WMI Integration
+- **Additional WMI Properties** - Now queries ExtendedDetectedErrorState and Status properties
+- **Complete Property Storage** - Printer struct stores all raw WMI status codes
+- **Comprehensive Constructor** - New `new_with_wmi()` method for complete WMI data
+
+#### Improved Offline Detection
+- **ExtendedPrinterStatus Support** - Uses ExtendedPrinterStatus=7 for offline detection
+- **WMI Status Integration** - Uses Status property ("Degraded", "Error", etc.) for offline detection
+- **Multi-Property Logic** - Enhanced offline detection using all available WMI properties
+
+### Enhanced
+- **Comprehensive WMI Coverage** - Complete access to all Win32_Printer properties
+- **Debug Information** - CLI now displays detailed WMI information for analysis
+- **Documentation** - Updated all documentation with new getter methods and examples
+
+### Technical Details
+- **API Expansion** - Added 10+ new getter methods for complete WMI property access
+- **Backward Compatible** - All existing API methods preserved
+- **Performance** - Single WMI query retrieves all properties efficiently
+
 ## [1.1.0] - 2025-01-17
 
 ### Added

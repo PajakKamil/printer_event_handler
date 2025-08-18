@@ -43,7 +43,7 @@ impl PrinterBackend for WindowsBackend {
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
             let com_con = COMLibrary::new().map_err(PrinterError::from)?;
             let wmi_connection = wmi::WMIConnection::new(com_con).map_err(PrinterError::from)?;
-            let printers: Vec<Win32Printer> = wmi_connection.raw_query("SELECT Name, PrinterStatus, DetectedErrorState, WorkOffline, PrinterState, Default FROM Win32_Printer").map_err(PrinterError::from)?;
+            let printers: Vec<Win32Printer> = wmi_connection.raw_query("SELECT Name, PrinterStatus, DetectedErrorState, WorkOffline, PrinterState, Default, ExtendedPrinterStatus, ExtendedDetectedErrorState, Status FROM Win32_Printer").map_err(PrinterError::from)?;
             Ok(printers)
         })
         .await

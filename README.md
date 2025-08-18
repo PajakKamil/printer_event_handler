@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.1.0"
+printer_event_handler = "1.2.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -231,10 +231,70 @@ sudo yum install cups  # or dnf install cups-client
 ### Core Types
 
 - **`PrinterMonitor`** - Main entry point for all printer operations
-- **`Printer`** - Represents a printer and its current state
-- **`PrinterStatus`** - Printer status enum (Idle, Printing, Offline, etc.)
+- **`Printer`** - Represents a printer with complete WMI information and current state
+- **`PrinterStatus`** - Printer status enum (current property, values 1-7)
+- **`PrinterState`** - Printer state enum (obsolete property, values 0-25)
 - **`ErrorState`** - Error condition enum (NoError, Jammed, NoPaper, etc.)
 - **`PrinterError`** - Error type for all operations
+
+### Complete WMI Property Access
+
+The `Printer` struct provides comprehensive access to all Win32_Printer WMI properties:
+
+#### Raw Status Code Methods
+```rust
+// Get numeric WMI status codes
+printer.printer_status_code()                    // Option<u32> - PrinterStatus (1-7)
+printer.printer_state_code()                     // Option<u32> - PrinterState (0-25, obsolete)
+printer.detected_error_state_code()              // Option<u32> - DetectedErrorState (0-11)
+printer.extended_printer_status_code()           // Option<u32> - ExtendedPrinterStatus
+printer.extended_detected_error_state_code()     // Option<u32> - ExtendedDetectedErrorState
+printer.wmi_status()                             // Option<&str> - Status property
+```
+
+#### Human-Readable Description Methods
+```rust
+// Get human-readable descriptions for status codes
+printer.printer_status_description()             // Option<&'static str>
+printer.printer_state_description()              // Option<&'static str>
+printer.detected_error_state_description()       // Option<&'static str>
+printer.extended_printer_status_description()    // Option<&'static str>
+```
+
+#### WMI Status Values
+The `wmi_status()` method returns the WMI Status property with values like:
+- `"OK"` - Normal functioning
+- `"Degraded"` - Functioning but with issues
+- `"Error"` - Has problems
+- `"Unknown"` - Cannot determine status
+- `"No Contact"` - Communication lost
+- And others per Microsoft documentation
+
+#### Example: Detailed Printer Analysis
+```rust
+let printer = monitor.find_printer("HP Printer").await?.unwrap();
+
+// Processed high-level information
+println!("Name: {}", printer.name());
+println!("Status: {}", printer.status_description());
+println!("Offline: {}", printer.is_offline());
+
+// Raw WMI analysis
+println!("--- WMI Details ---");
+if let Some(code) = printer.printer_status_code() {
+    println!("PrinterStatus: {} ({})", code, 
+        printer.printer_status_description().unwrap_or("Unknown"));
+}
+
+if let Some(code) = printer.extended_printer_status_code() {
+    println!("ExtendedPrinterStatus: {} ({})", code,
+        printer.extended_printer_status_description().unwrap_or("Unknown"));
+}
+
+if let Some(status) = printer.wmi_status() {
+    println!("WMI Status: {}", status);
+}
+```
 
 ### Printer Status Values
 
