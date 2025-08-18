@@ -22,6 +22,10 @@ cargo run --bin error_handling
 
 # Advanced async patterns and concurrent monitoring
 cargo run --bin async_patterns
+
+# Property-level change monitoring
+cargo run --bin property_monitoring -- "Printer Name"
+cargo run --bin property_monitoring  # Uses first available printer
 ```
 
 ### From the main project directory:
@@ -31,6 +35,7 @@ cargo run --manifest-path examples/Cargo.toml --bin basic_listing
 cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer Name"
 cargo run --manifest-path examples/Cargo.toml --bin error_handling
 cargo run --manifest-path examples/Cargo.toml --bin async_patterns
+cargo run --manifest-path examples/Cargo.toml --bin property_monitoring -- "Printer Name"
 ```
 
 ## Example Files
@@ -88,6 +93,20 @@ Advanced async usage patterns:
 - Background state management
 - Stream processing of printer updates
 
+### [`property_monitoring.rs`](property_monitoring.rs)
+Property-level change monitoring and detection:
+- Individual property change tracking
+- Detailed change descriptions
+- Specific property monitoring (e.g., only "IsOffline" changes)
+- Multi-printer concurrent monitoring
+
+**Features shown:**
+- `monitor_printer_changes()` for detailed change detection
+- `monitor_property()` for specific property watching
+- `monitor_multiple_printers()` for concurrent monitoring
+- `PropertyChange` and `PrinterChanges` types
+- Property-specific callbacks and filtering
+
 ## Key WMI Properties Demonstrated
 
 All examples showcase the complete set of WMI properties available:
@@ -113,8 +132,9 @@ All examples showcase the complete set of WMI properties available:
 
 1. **Start with `basic_listing.rs`** to understand available WMI properties
 2. **Use `monitor_changes.rs`** to see real-time status updates
-3. **Study `error_handling.rs`** for production-ready error handling
-4. **Explore `async_patterns.rs`** for advanced concurrent usage
+3. **Try `property_monitoring.rs`** for detailed property-level change tracking
+4. **Study `error_handling.rs`** for production-ready error handling
+5. **Explore `async_patterns.rs`** for advanced concurrent usage
 
 ## Platform Notes
 

@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.2.0"
+printer_event_handler = "1.3.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -135,6 +135,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Advanced Property Monitoring
+
+The library supports detailed property-level monitoring to detect specific changes:
+
+```rust
+use printer_event_handler::PrinterMonitor;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+    
+    // Monitor all property changes with detailed tracking
+    monitor.monitor_printer_changes("HP LaserJet", 30, |changes| {
+        if changes.has_changes() {
+            println!("🔄 {} changes detected in '{}':", 
+                changes.change_count(), changes.printer_name);
+            
+            for change in &changes.changes {
+                println!("  - {}", change.description());
+            }
+        }
+    }).await?;
+    
+    Ok(())
+}
+```
+
+#### Monitor Specific Properties
+
+```rust
+// Monitor only offline status changes
+monitor.monitor_property("HP LaserJet", "IsOffline", 60, |change| {
+    println!("📶 Offline status: {}", change.description());
+}).await?;
+
+// Monitor multiple printers concurrently
+let printer_names = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
+monitor.monitor_multiple_printers(printer_names, 30, |changes| {
+    println!("🖨️  Multi-printer change: {} - {}", 
+        changes.printer_name, changes.summary());
+}).await?;
+```
+
 ## CLI Usage
 
 The crate also provides a command-line interface:
@@ -211,7 +254,7 @@ Press Ctrl+C to stop
 
 | Platform | Backend | Requirements | Coverage |
 |----------|---------|--------------|----------|
-| **Windows** | WMI (Windows Management Instrumentation) | None (built-in) | **Complete Win32_Printer support** - All 26 PrinterState values (0-25) and 12 DetectedErrorState values (0-11) https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer |
+| **Windows** | WMI (Windows Management Instrumentation) | None (built-in) | **Complete Win32_Printer support** - Full .NET PrintQueueStatus flag support (values like 1024, 16384) and 12 DetectedErrorState values (0-11) https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer |
 | **Linux** | CUPS (Common Unix Printing System) | `cups-client` package recommended | Basic status detection (idle, printing, offline) with CUPS integration |
 
 ### Linux Setup
@@ -233,7 +276,7 @@ sudo yum install cups  # or dnf install cups-client
 - **`PrinterMonitor`** - Main entry point for all printer operations
 - **`Printer`** - Represents a printer with complete WMI information and current state
 - **`PrinterStatus`** - Printer status enum (current property, values 1-7)
-- **`PrinterState`** - Printer state enum (obsolete property, values 0-25)
+- **`PrinterState`** - Printer state enum (.NET PrintQueueStatus flags like 1024, 16384)
 - **`ErrorState`** - Error condition enum (NoError, Jammed, NoPaper, etc.)
 - **`PrinterError`** - Error type for all operations
 
@@ -245,7 +288,7 @@ The `Printer` struct provides comprehensive access to all Win32_Printer WMI prop
 ```rust
 // Get numeric WMI status codes
 printer.printer_status_code()                    // Option<u32> - PrinterStatus (1-7)
-printer.printer_state_code()                     // Option<u32> - PrinterState (0-25, obsolete)
+printer.printer_state_code()                     // Option<u32> - PrinterState (.NET PrintQueueStatus flags)
 printer.detected_error_state_code()              // Option<u32> - DetectedErrorState (0-11)
 printer.extended_printer_status_code()           // Option<u32> - ExtendedPrinterStatus
 printer.extended_detected_error_state_code()     // Option<u32> - ExtendedDetectedErrorState
@@ -300,44 +343,56 @@ if let Some(status) = printer.wmi_status() {
 
 The library provides comprehensive support for all Win32_Printer states:
 
+#### PrinterStatus (Current Property, Values 1-7)
 ```rust
 pub enum PrinterStatus {
-    // Basic PrinterStatus values (1-7)
-    Other,          // Other status
-    Unknown,        // Unknown status  
-    Idle,           // Ready to print
-    Printing,       // Currently printing
-    Warmup,         // Starting up/warming up
-    StoppedPrinting,// Stopped mid-job
-    Offline,        // Not available
-    
-    // Extended PrinterState values (0-25) - Full Win32_Printer support
-    Paused,         // Printer paused
-    Error,          // General error state
-    PendingDeletion,// Queued for deletion
-    PaperJam,       // Paper jam detected
-    PaperOut,       // Out of paper
-    ManualFeed,     // Manual feed required
-    PaperProblem,   // Paper-related issue
-    IOActive,       // I/O operations active
-    Busy,           // Printer busy
-    OutputBinFull,  // Output tray full
-    NotAvailable,   // Printer not available
-    Waiting,        // Waiting for job
-    Processing,     // Processing job
-    Initialization, // Initializing
-    TonerLow,       // Low toner/ink
-    NoToner,        // Out of toner/ink
-    PagePunt,       // Page punt condition
-    UserInterventionRequired, // User action needed
-    OutOfMemory,    // Memory full
-    DoorOpen,       // Cover/door open
-    ServerUnknown,  // Server status unknown
-    PowerSave,      // Power save mode
-    
-    StatusUnknown,  // Could not determine
+    Other,           // Other status (1)
+    Unknown,         // Unknown status (2)
+    Idle,            // Ready to print (3)
+    Printing,        // Currently printing (4)
+    Warmup,          // Starting up/warming up (5)
+    StoppedPrinting, // Stopped mid-job (6)
+    Offline,         // Not available (7)
+    StatusUnknown,   // Could not determine
 }
 ```
+
+#### PrinterState (.NET PrintQueueStatus Flags)
+Based on [.NET System.Printing.PrintQueueStatus](https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus):
+
+```rust
+pub enum PrinterState {
+    None,                     // No status (0)
+    Paused,                   // Printer paused (1)
+    Error,                    // General error state (2)
+    PendingDeletion,          // Queued for deletion (4)
+    PaperJam,                 // Paper jam detected (8)
+    PaperOut,                 // Out of paper (16)
+    ManualFeed,               // Manual feed required (32)
+    PaperProblem,             // Paper-related issue (64)
+    Offline,                  // Not available (128)
+    IOActive,                 // I/O operations active (256)
+    Busy,                     // Printer busy (512)
+    Printing,                 // Currently printing (1024)
+    OutputBinFull,            // Output tray full (2048)
+    NotAvailable,             // Printer not available (4096)
+    Waiting,                  // Waiting for job (8192)
+    Processing,               // Processing job (16384)
+    Initializing,             // Initializing (32768)
+    WarmingUp,                // Warming up (65536)
+    TonerLow,                 // Low toner/ink (131072)
+    NoToner,                  // Out of toner/ink (262144)
+    PagePunt,                 // Page punt condition (524288)
+    UserInterventionRequired, // User action needed (1048576)
+    OutOfMemory,              // Memory full (2097152)
+    DoorOpen,                 // Cover/door open (4194304)
+    ServerUnknown,            // Server status unknown (8388608)
+    PowerSave,                // Power save mode (16777216)
+    StatusUnknown,            // Could not determine
+}
+```
+
+**Note**: The PrinterState values are bitwise flags, so multiple states can be active simultaneously. The library automatically selects the most significant/priority state for display.
 
 ### Error States
 
@@ -365,6 +420,7 @@ Check out the [examples](examples/) directory for comprehensive usage patterns w
 
 - [`basic_listing.rs`](examples/basic_listing.rs) - List all printers with detailed WMI information
 - [`monitor_changes.rs`](examples/monitor_changes.rs) - Monitor status changes with WMI details
+- [`property_monitoring.rs`](examples/property_monitoring.rs) - Advanced property-level change detection
 - [`error_handling.rs`](examples/error_handling.rs) - Proper error handling and graceful degradation
 - [`async_patterns.rs`](examples/async_patterns.rs) - Advanced async usage and concurrent monitoring
 

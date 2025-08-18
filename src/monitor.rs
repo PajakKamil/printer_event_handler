@@ -1,5 +1,5 @@
 use crate::backend::{PrinterBackend, create_backend};
-use crate::{Printer, Result};
+use crate::{Printer, Result, PrinterChanges};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
@@ -256,6 +256,215 @@ impl PrinterMonitor {
         }
 
         Ok(summary)
+    }
+
+    /// Monitors a printer with detailed property change detection.
+    ///
+    /// This enhanced monitoring method provides detailed information about exactly which
+    /// properties changed between checks, enabling fine-grained monitoring and alerting.
+    ///
+    /// # Arguments
+    /// * `printer_name` - The name of the printer to monitor
+    /// * `interval_secs` - Polling interval in seconds
+    /// * `callback` - Function called when properties change, receives PrinterChanges
+    ///
+    /// # Returns
+    /// * `Result<()>` - Never returns Ok normally (runs indefinitely), only Err on failure
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use printer_event_handler::PrinterMonitor;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let monitor = PrinterMonitor::new().await.unwrap();
+    ///     
+    ///     monitor.monitor_printer_changes("HP LaserJet", 30, |changes| {
+    ///         if changes.has_changes() {
+    ///             println!("Detected {} changes:", changes.change_count());
+    ///             for change in &changes.changes {
+    ///                 println!("  - {}", change.description());
+    ///             }
+    ///         }
+    ///     }).await.unwrap();
+    /// }
+    /// ```
+    pub async fn monitor_printer_changes<F>(
+        &self,
+        printer_name: &str,
+        interval_secs: u64,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&PrinterChanges) + Send,
+    {
+        info!("Starting detailed printer change monitoring for: {}", printer_name);
+
+        let mut previous_printer: Option<Printer> = None;
+
+        loop {
+            match self.find_printer(printer_name).await {
+                Ok(Some(current_printer)) => {
+                    if let Some(ref prev) = previous_printer {
+                        let changes = prev.compare_with(&current_printer);
+                        if changes.has_changes() {
+                            info!(
+                                "Printer '{}' - {} properties changed",
+                                printer_name,
+                                changes.change_count()
+                            );
+                            callback(&changes);
+                        }
+                    } else {
+                        // Initial state - report as "initial" (no previous state)
+                        let changes = PrinterChanges::new(current_printer.name().to_string());
+                        callback(&changes);
+                        info!("Printer '{}' - Initial state captured", printer_name);
+                    }
+                    previous_printer = Some(current_printer);
+                }
+                Ok(None) => {
+                    warn!("Printer '{}' not found", printer_name);
+                    if let Some(prev) = previous_printer.take() {
+                        // Printer disappeared - create a change showing it went offline
+                        let mut changes = PrinterChanges::new(printer_name.to_string());
+                        changes.changes.push(crate::PropertyChange::IsOffline {
+                            old: prev.is_offline(),
+                            new: true,
+                        });
+                        callback(&changes);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to check printer status: {}", e);
+                    return Err(e);
+                }
+            }
+
+            sleep(Duration::from_secs(interval_secs)).await;
+        }
+    }
+
+    /// Monitors a specific property of a printer for changes.
+    ///
+    /// This method allows monitoring just a single property, useful for alerting
+    /// on specific conditions like "IsOffline" or "Status" changes.
+    ///
+    /// # Arguments
+    /// * `printer_name` - The name of the printer to monitor
+    /// * `property_name` - The specific property to watch (e.g., "IsOffline", "Status")
+    /// * `interval_secs` - Polling interval in seconds
+    /// * `callback` - Function called when the property changes
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use printer_event_handler::PrinterMonitor;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let monitor = PrinterMonitor::new().await.unwrap();
+    ///     
+    ///     monitor.monitor_property("HP LaserJet", "IsOffline", 60, |change| {
+    ///         println!("Offline status changed: {}", change.description());
+    ///     }).await.unwrap();
+    /// }
+    /// ```
+    pub async fn monitor_property<F>(
+        &self,
+        printer_name: &str,
+        property_name: &str,
+        interval_secs: u64,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&crate::PropertyChange) + Send,
+    {
+        info!("Starting property '{}' monitoring for printer: {}", property_name, printer_name);
+
+        self.monitor_printer_changes(printer_name, interval_secs, move |changes| {
+            for change in &changes.changes {
+                if change.property_name() == property_name {
+                    callback(change);
+                }
+            }
+        }).await
+    }
+
+    /// Monitors multiple printers concurrently and reports changes for any of them.
+    ///
+    /// This method allows monitoring several printers simultaneously, with a single
+    /// callback that receives changes from any of the monitored printers.
+    ///
+    /// # Arguments
+    /// * `printer_names` - List of printer names to monitor
+    /// * `interval_secs` - Polling interval in seconds
+    /// * `callback` - Function called when any printer changes
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use printer_event_handler::PrinterMonitor;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let monitor = PrinterMonitor::new().await.unwrap();
+    ///     let printers = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
+    ///     
+    ///     monitor.monitor_multiple_printers(printers, 30, |changes| {
+    ///         println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
+    ///     }).await.unwrap();
+    /// }
+    /// ```
+    pub async fn monitor_multiple_printers<F>(
+        &self,
+        printer_names: Vec<String>,
+        interval_secs: u64,
+        callback: F,
+    ) -> Result<()>
+    where
+        F: Fn(&PrinterChanges) + Send + Sync + 'static,
+    {
+        use std::sync::Arc;
+        use tokio::task::JoinHandle;
+
+        info!("Starting concurrent monitoring of {} printers", printer_names.len());
+        
+        let callback = Arc::new(callback);
+        let mut tasks: Vec<JoinHandle<Result<()>>> = Vec::new();
+
+        for printer_name in printer_names {
+            let callback_clone = callback.clone();
+            let printer_name_clone = printer_name.clone();
+
+            let task = tokio::spawn(async move {
+                // This is a bit tricky - we can't easily clone self, so we need to create a new monitor
+                // In practice, you'd want to refactor this to share the backend more efficiently
+                let new_monitor = PrinterMonitor::new().await?;
+                new_monitor.monitor_printer_changes(&printer_name_clone, interval_secs, move |changes| {
+                    callback_clone(changes);
+                }).await
+            });
+
+            tasks.push(task);
+        }
+
+        // Wait for all monitoring tasks (this will run indefinitely unless one fails)
+        for task in tasks {
+            match task.await {
+                Ok(Ok(())) => {
+                    info!("Monitoring task completed successfully");
+                }
+                Ok(Err(e)) => {
+                    error!("Monitoring task failed: {}", e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    error!("Monitoring task panicked: {}", e);
+                    return Err(crate::PrinterError::Other(format!("Task panicked: {}", e)));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

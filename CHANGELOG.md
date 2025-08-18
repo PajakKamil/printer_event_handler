@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-01-18
+
+### Fixed
+
+#### PrinterState Accuracy - BREAKING INTERNAL CHANGE
+- **Correct WMI Value Mapping** - Fixed critical issue where PrinterState enum used incorrect 0-25 range instead of actual WMI values
+- **Real WMI Values** - PrinterState now correctly handles actual WMI values like 1024 (Printing), 16384 (Processing), 128 (Offline)
+- **.NET PrintQueueStatus Implementation** - Replaced PrinterState with proper .NET PrintQueueStatus flag-based system
+- **Bitwise Flag Support** - PrinterState now properly handles multiple concurrent states using bitwise flags
+- **Priority-Based Selection** - When multiple flags are set, selects the most significant state (errors → active → idle)
+
+#### Enhanced Property Monitoring
+- **Property Change Detection** - Added `PropertyChange` enum for tracking individual property changes
+- **Detailed Monitoring** - New `monitor_printer_changes()` method for granular change detection  
+- **Property-Specific Monitoring** - New `monitor_property()` method for watching individual properties
+- **Multi-Printer Monitoring** - New `monitor_multiple_printers()` method for concurrent monitoring
+- **Property Change Collection** - New `PrinterChanges` struct for organizing detected changes
+
+### Added
+
+#### .NET PrintQueueStatus Flag Values
+- **Complete Flag Coverage** - All 23 PrintQueueStatus flag values now supported:
+  - `None` (0), `Paused` (1), `Error` (2), `PendingDeletion` (4)
+  - `PaperJam` (8), `PaperOut` (16), `ManualFeed` (32), `PaperProblem` (64)
+  - `Offline` (128), `IOActive` (256), `Busy` (512), `Printing` (1024)
+  - `OutputBinFull` (2048), `NotAvailable` (4096), `Waiting` (8192)
+  - `Processing` (16384), `Initializing` (32768), `WarmingUp` (65536)
+  - `TonerLow` (131072), `NoToner` (262144), `PagePunt` (524288)
+  - `UserInterventionRequired` (1048576), `OutOfMemory` (2097152)
+  - `DoorOpen` (4194304), `ServerUnknown` (8388608), `PowerSave` (16777216)
+
+#### Enhanced Status Detection
+- **Smart Flag Interpretation** - Prioritized flag parsing (errors first, then active states, then idle)
+- **Status Conversion Methods** - `is_error()` and `is_offline()` methods for PrinterState
+- **PrinterStatus Mapping** - Improved `to_printer_status()` conversion for compatibility
+
+### Enhanced
+- **API Compatibility** - No breaking changes to public API despite internal restructure
+- **Accurate Status Display** - CLI now shows correct status for real printer values
+- **Comprehensive Examples** - New property_monitoring.rs example demonstrating advanced features
+- **Documentation** - Updated README with accurate PrinterState flag values and examples
+
+### Technical Details
+- **Microsoft Documentation Compliance** - Now follows [.NET PrintQueueStatus](https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus) specification
+- **Backward Compatible** - All existing API methods work unchanged
+- **Performance** - Enhanced priority-based flag parsing for efficient status determination
+- **Testing** - All library tests updated and pass with new implementation
+
 ## [1.2.0] - 2025-01-18
 
 ### Added
@@ -12,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Complete WMI Property Access
 - **Raw Status Code Getters** - Access all numeric WMI status codes:
   - `printer_status_code()` → PrinterStatus (1-7, current/recommended property)
-  - `printer_state_code()` → PrinterState (0-25, obsolete property)
+  - `printer_state_code()` → PrinterState (.NET PrintQueueStatus flags)
   - `detected_error_state_code()` → DetectedErrorState (0-11)
   - `extended_printer_status_code()` → ExtendedPrinterStatus 
   - `extended_detected_error_state_code()` → ExtendedDetectedErrorState
@@ -49,8 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Comprehensive Win32_Printer Support
-- **Complete PrinterState mapping** - Now supports all 26 PrinterState values (0-25) according to Microsoft Win32_Printer documentation:
+#### Comprehensive Win32_Printer Support  
+- **Complete PrinterState mapping** - Added support for 26 PrinterState values (0-25) based on Win32_Printer documentation:
   - `Paused` (1) - Printer paused
   - `Error` (2) - General error state
   - `PendingDeletion` (3) - Queued for deletion
@@ -94,9 +142,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-platform compatibility** - Linux backend remains fully functional with new Windows enum variants
 
 ### Technical Details
-- **Microsoft Win32_Printer compliance** - Full implementation according to [official documentation](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer)
+- **Microsoft Win32_Printer compliance** - Implementation based on [official documentation](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer)
 - **No breaking changes** - All existing enum variants preserved, only additions made
-- **Comprehensive testing** - All status mappings validated against real Windows printer data
+- **Status mapping validation** - Enum values tested against available printer data
+
+**Note**: The 0-25 range mapping was later discovered to be incorrect in v1.3.0. Actual WMI values use .NET PrintQueueStatus flags.
 
 ## [1.0.0] - 2024-XX-XX
 

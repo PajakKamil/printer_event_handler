@@ -20,6 +20,10 @@ path = "error_handling.rs"
 name = "async_patterns"
 path = "async_patterns.rs"
 
+[[bin]]
+name = "property_monitoring"
+path = "property_monitoring.rs"
+
 [dependencies]
 printer_event_handler = { path = ".." }
 tokio = { version = "1.47.1", features = ["full"] }
