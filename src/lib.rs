@@ -61,8 +61,10 @@ pub mod monitor;
 pub mod printer;
 
 pub use error::PrinterError;
-pub use monitor::{PrinterMonitor, MonitorableProperty};
-pub use printer::{ErrorState, Printer, PrinterState, PrinterStatus, PropertyChange, PrinterChanges};
+pub use monitor::{MonitorableProperty, PrinterMonitor};
+pub use printer::{
+    ErrorState, Printer, PrinterChanges, PrinterState, PrinterStatus, PropertyChange,
+};
 
 /// Result type used throughout the library
 pub type Result<T> = std::result::Result<T, PrinterError>;

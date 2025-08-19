@@ -1,5 +1,5 @@
 use crate::backend::{PrinterBackend, create_backend};
-use crate::{Printer, Result, PrinterChanges};
+use crate::{Printer, PrinterChanges, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
@@ -256,7 +256,11 @@ impl PrinterMonitor {
         loop {
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
-                    println!("[{}] Checking printer: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"), current_printer.name());
+                    println!(
+                        "[{}] Checking printer: {}",
+                        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+                        current_printer.name()
+                    );
                     let has_changed = previous_printer
                         .as_ref()
                         .map(|prev| prev != &current_printer)
@@ -390,7 +394,10 @@ impl PrinterMonitor {
     where
         F: FnMut(&PrinterChanges) + Send,
     {
-        info!("Starting detailed printer change monitoring for: {}", printer_name);
+        info!(
+            "Starting detailed printer change monitoring for: {}",
+            printer_name
+        );
 
         let mut previous_printer: Option<Printer> = None;
 
@@ -472,7 +479,10 @@ impl PrinterMonitor {
         F: FnMut(&crate::PropertyChange) + Send,
     {
         let property_name = property.as_str();
-        info!("Starting property '{}' monitoring for printer: {}", property_name, printer_name);
+        info!(
+            "Starting property '{}' monitoring for printer: {}",
+            property_name, printer_name
+        );
 
         self.monitor_printer_changes(printer_name, interval_ms, move |changes| {
             for change in &changes.changes {
@@ -480,7 +490,8 @@ impl PrinterMonitor {
                     callback(change);
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Monitors multiple printers concurrently and reports changes for any of them.
@@ -519,8 +530,11 @@ impl PrinterMonitor {
         use std::sync::Arc;
         use tokio::task::JoinHandle;
 
-        info!("Starting concurrent monitoring of {} printers", printer_names.len());
-        
+        info!(
+            "Starting concurrent monitoring of {} printers",
+            printer_names.len()
+        );
+
         let callback = Arc::new(callback);
         let mut tasks: Vec<JoinHandle<Result<()>>> = Vec::new();
 
@@ -532,9 +546,11 @@ impl PrinterMonitor {
                 // This is a bit tricky - we can't easily clone self, so we need to create a new monitor
                 // In practice, you'd want to refactor this to share the backend more efficiently
                 let new_monitor = PrinterMonitor::new().await?;
-                new_monitor.monitor_printer_changes(&printer_name_clone, interval_ms, move |changes| {
-                    callback_clone(changes);
-                }).await
+                new_monitor
+                    .monitor_printer_changes(&printer_name_clone, interval_ms, move |changes| {
+                        callback_clone(changes);
+                    })
+                    .await
             });
 
             tasks.push(task);

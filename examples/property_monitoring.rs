@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example property_monitoring
 
-use printer_event_handler::{PrinterError, PrinterMonitor, MonitorableProperty};
+use printer_event_handler::{MonitorableProperty, PrinterError, PrinterMonitor};
 use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -146,9 +146,14 @@ async fn demonstrate_specific_property_monitoring(
         tokio::spawn(async move {
             let new_monitor = PrinterMonitor::new().await?;
             new_monitor
-                .monitor_property(&printer_name, MonitorableProperty::IsOffline, 1000, |change| {
-                    println!("OFFLINE STATUS CHANGE: {}", change.description());
-                })
+                .monitor_property(
+                    &printer_name,
+                    MonitorableProperty::IsOffline,
+                    1000,
+                    |change| {
+                        println!("OFFLINE STATUS CHANGE: {}", change.description());
+                    },
+                )
                 .await
         })
     };

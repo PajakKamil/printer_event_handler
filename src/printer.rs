@@ -18,7 +18,7 @@ pub enum PrinterStatus {
 }
 
 /// Represents a printer's state using .NET PrintQueueStatus flags
-/// 
+///
 /// This enum represents the actual WMI PrinterState values which correspond to
 /// the .NET System.Printing.PrintQueueStatus enumeration flags.
 /// See: <https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus>
@@ -113,69 +113,93 @@ impl PrinterState {
     pub(crate) fn from_u32(state: u32) -> Self {
         // Handle .NET PrintQueueStatus flag values - return the most significant flag
         // Priority order: Error conditions first, then active states, then idle states
-        
+
         if state == 0 {
             return PrinterState::None;
         }
-        
+
         // Error and problem states (highest priority)
-        if state & 4194304 != 0 { // DoorOpen
+        if state & 4194304 != 0 {
+            // DoorOpen
             PrinterState::DoorOpen
-        } else if state & 2 != 0 { // Error
+        } else if state & 2 != 0 {
+            // Error
             PrinterState::Error
-        } else if state & 8 != 0 { // PaperJam
+        } else if state & 8 != 0 {
+            // PaperJam
             PrinterState::PaperJam
-        } else if state & 16 != 0 { // PaperOut  
+        } else if state & 16 != 0 {
+            // PaperOut
             PrinterState::PaperOut
-        } else if state & 64 != 0 { // PaperProblem
+        } else if state & 64 != 0 {
+            // PaperProblem
             PrinterState::PaperProblem
-        } else if state & 131072 != 0 { // TonerLow
+        } else if state & 131072 != 0 {
+            // TonerLow
             PrinterState::TonerLow
-        } else if state & 262144 != 0 { // NoToner
+        } else if state & 262144 != 0 {
+            // NoToner
             PrinterState::NoToner
-        } else if state & 2097152 != 0 { // OutOfMemory
+        } else if state & 2097152 != 0 {
+            // OutOfMemory
             PrinterState::OutOfMemory
-        } else if state & 1048576 != 0 { // UserInterventionRequired
+        } else if state & 1048576 != 0 {
+            // UserInterventionRequired
             PrinterState::UserInterventionRequired
-        } else if state & 524288 != 0 { // PagePunt
+        } else if state & 524288 != 0 {
+            // PagePunt
             PrinterState::PagePunt
-        } else if state & 128 != 0 { // Offline
+        } else if state & 128 != 0 {
+            // Offline
             PrinterState::Offline
-        } else if state & 4096 != 0 { // NotAvailable
+        } else if state & 4096 != 0 {
+            // NotAvailable
             PrinterState::NotAvailable
-        } else if state & 8388608 != 0 { // ServerUnknown
+        } else if state & 8388608 != 0 {
+            // ServerUnknown
             PrinterState::ServerUnknown
-        
+
         // Active processing states
-        } else if state & 1024 != 0 { // Printing
+        } else if state & 1024 != 0 {
+            // Printing
             PrinterState::Printing
-        } else if state & 16384 != 0 { // Processing
+        } else if state & 16384 != 0 {
+            // Processing
             PrinterState::Processing
-        } else if state & 32768 != 0 { // Initializing
+        } else if state & 32768 != 0 {
+            // Initializing
             PrinterState::Initializing
-        } else if state & 65536 != 0 { // WarmingUp
+        } else if state & 65536 != 0 {
+            // WarmingUp
             PrinterState::WarmingUp
-        } else if state & 512 != 0 { // Busy
+        } else if state & 512 != 0 {
+            // Busy
             PrinterState::Busy
-        } else if state & 256 != 0 { // IOActive
+        } else if state & 256 != 0 {
+            // IOActive
             PrinterState::IOActive
-        
+
         // Waiting and paused states
-        } else if state & 1 != 0 { // Paused
+        } else if state & 1 != 0 {
+            // Paused
             PrinterState::Paused
-        } else if state & 8192 != 0 { // Waiting
+        } else if state & 8192 != 0 {
+            // Waiting
             PrinterState::Waiting
-        } else if state & 32 != 0 { // ManualFeed
+        } else if state & 32 != 0 {
+            // ManualFeed
             PrinterState::ManualFeed
-        } else if state & 2048 != 0 { // OutputBinFull
+        } else if state & 2048 != 0 {
+            // OutputBinFull
             PrinterState::OutputBinFull
-        
+
         // Maintenance and special states
-        } else if state & 16777216 != 0 { // PowerSave
+        } else if state & 16777216 != 0 {
+            // PowerSave
             PrinterState::PowerSave
-        } else if state & 4 != 0 { // PendingDeletion
+        } else if state & 4 != 0 {
+            // PendingDeletion
             PrinterState::PendingDeletion
-        
         } else {
             PrinterState::StatusUnknown
         }
@@ -228,34 +252,34 @@ impl PrinterState {
             PrinterState::WarmingUp => PrinterStatus::Warmup,
             PrinterState::Offline => PrinterStatus::Offline,
             PrinterState::Paused => PrinterStatus::StoppedPrinting,
-            PrinterState::Error | 
-            PrinterState::PaperJam | 
-            PrinterState::PaperOut | 
-            PrinterState::DoorOpen => PrinterStatus::Other, // Error conditions
+            PrinterState::Error
+            | PrinterState::PaperJam
+            | PrinterState::PaperOut
+            | PrinterState::DoorOpen => PrinterStatus::Other, // Error conditions
             _ => PrinterStatus::StatusUnknown,
         }
     }
 
     /// Checks if this status represents an error condition
     pub fn is_error(&self) -> bool {
-        matches!(self,
-            PrinterState::Error |
-            PrinterState::PaperJam |
-            PrinterState::PaperOut |
-            PrinterState::PaperProblem |
-            PrinterState::DoorOpen |
-            PrinterState::OutOfMemory |
-            PrinterState::NoToner |
-            PrinterState::UserInterventionRequired
+        matches!(
+            self,
+            PrinterState::Error
+                | PrinterState::PaperJam
+                | PrinterState::PaperOut
+                | PrinterState::PaperProblem
+                | PrinterState::DoorOpen
+                | PrinterState::OutOfMemory
+                | PrinterState::NoToner
+                | PrinterState::UserInterventionRequired
         )
     }
 
     /// Checks if this status represents an offline condition
     pub fn is_offline(&self) -> bool {
-        matches!(self,
-            PrinterState::Offline |
-            PrinterState::NotAvailable |
-            PrinterState::ServerUnknown
+        matches!(
+            self,
+            PrinterState::Offline | PrinterState::NotAvailable | PrinterState::ServerUnknown
         )
     }
 }
@@ -371,18 +395,54 @@ impl std::fmt::Display for ErrorState {
 /// Represents a change in a specific printer property
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyChange {
-    Name { old: String, new: String },
-    Status { old: PrinterStatus, new: PrinterStatus },
-    State { old: Option<PrinterState>, new: Option<PrinterState> },
-    ErrorState { old: ErrorState, new: ErrorState },
-    IsOffline { old: bool, new: bool },
-    IsDefault { old: bool, new: bool },
-    PrinterStatusCode { old: Option<u32>, new: Option<u32> },
-    PrinterStateCode { old: Option<u32>, new: Option<u32> },
-    DetectedErrorStateCode { old: Option<u32>, new: Option<u32> },
-    ExtendedDetectedErrorStateCode { old: Option<u32>, new: Option<u32> },
-    ExtendedPrinterStatusCode { old: Option<u32>, new: Option<u32> },
-    WmiStatus { old: Option<String>, new: Option<String> },
+    Name {
+        old: String,
+        new: String,
+    },
+    Status {
+        old: PrinterStatus,
+        new: PrinterStatus,
+    },
+    State {
+        old: Option<PrinterState>,
+        new: Option<PrinterState>,
+    },
+    ErrorState {
+        old: ErrorState,
+        new: ErrorState,
+    },
+    IsOffline {
+        old: bool,
+        new: bool,
+    },
+    IsDefault {
+        old: bool,
+        new: bool,
+    },
+    PrinterStatusCode {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    PrinterStateCode {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    DetectedErrorStateCode {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    ExtendedDetectedErrorStateCode {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    ExtendedPrinterStatusCode {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    WmiStatus {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 impl PropertyChange {
@@ -391,14 +451,16 @@ impl PropertyChange {
         match self {
             PropertyChange::Name { .. } => "Name",
             PropertyChange::Status { .. } => "Status",
-            PropertyChange::State { .. } => "State", 
+            PropertyChange::State { .. } => "State",
             PropertyChange::ErrorState { .. } => "ErrorState",
             PropertyChange::IsOffline { .. } => "IsOffline",
             PropertyChange::IsDefault { .. } => "IsDefault",
             PropertyChange::PrinterStatusCode { .. } => "PrinterStatusCode",
             PropertyChange::PrinterStateCode { .. } => "PrinterStateCode",
             PropertyChange::DetectedErrorStateCode { .. } => "DetectedErrorStateCode",
-            PropertyChange::ExtendedDetectedErrorStateCode { .. } => "ExtendedDetectedErrorStateCode",
+            PropertyChange::ExtendedDetectedErrorStateCode { .. } => {
+                "ExtendedDetectedErrorStateCode"
+            }
             PropertyChange::ExtendedPrinterStatusCode { .. } => "ExtendedPrinterStatusCode",
             PropertyChange::WmiStatus { .. } => "WmiStatus",
         }
@@ -408,20 +470,34 @@ impl PropertyChange {
     pub fn description(&self) -> String {
         match self {
             PropertyChange::Name { old, new } => format!("Name: '{}' → '{}'", old, new),
-            PropertyChange::Status { old, new } => format!("Status: {} → {}", old.description(), new.description()),
+            PropertyChange::Status { old, new } => {
+                format!("Status: {} → {}", old.description(), new.description())
+            }
             PropertyChange::State { old, new } => {
                 let old_desc = old.as_ref().map(|s| s.description()).unwrap_or("None");
                 let new_desc = new.as_ref().map(|s| s.description()).unwrap_or("None");
                 format!("State: {} → {}", old_desc, new_desc)
-            },
-            PropertyChange::ErrorState { old, new } => format!("ErrorState: {} → {}", old.description(), new.description()),
+            }
+            PropertyChange::ErrorState { old, new } => {
+                format!("ErrorState: {} → {}", old.description(), new.description())
+            }
             PropertyChange::IsOffline { old, new } => format!("IsOffline: {} → {}", old, new),
             PropertyChange::IsDefault { old, new } => format!("IsDefault: {} → {}", old, new),
-            PropertyChange::PrinterStatusCode { old, new } => format!("PrinterStatusCode: {:?} → {:?}", old, new),
-            PropertyChange::PrinterStateCode { old, new } => format!("PrinterStateCode: {:?} → {:?}", old, new),
-            PropertyChange::DetectedErrorStateCode { old, new } => format!("DetectedErrorStateCode: {:?} → {:?}", old, new),
-            PropertyChange::ExtendedDetectedErrorStateCode { old, new } => format!("ExtendedDetectedErrorStateCode: {:?} → {:?}", old, new),
-            PropertyChange::ExtendedPrinterStatusCode { old, new } => format!("ExtendedPrinterStatusCode: {:?} → {:?}", old, new),
+            PropertyChange::PrinterStatusCode { old, new } => {
+                format!("PrinterStatusCode: {:?} → {:?}", old, new)
+            }
+            PropertyChange::PrinterStateCode { old, new } => {
+                format!("PrinterStateCode: {:?} → {:?}", old, new)
+            }
+            PropertyChange::DetectedErrorStateCode { old, new } => {
+                format!("DetectedErrorStateCode: {:?} → {:?}", old, new)
+            }
+            PropertyChange::ExtendedDetectedErrorStateCode { old, new } => {
+                format!("ExtendedDetectedErrorStateCode: {:?} → {:?}", old, new)
+            }
+            PropertyChange::ExtendedPrinterStatusCode { old, new } => {
+                format!("ExtendedPrinterStatusCode: {:?} → {:?}", old, new)
+            }
             PropertyChange::WmiStatus { old, new } => format!("WmiStatus: {:?} → {:?}", old, new),
         }
     }
@@ -460,12 +536,15 @@ impl PrinterChanges {
 
     /// Checks if a specific property changed
     pub fn has_property_change(&self, property_name: &str) -> bool {
-        self.changes.iter().any(|change| change.property_name() == property_name)
+        self.changes
+            .iter()
+            .any(|change| change.property_name() == property_name)
     }
 
     /// Gets all changes for a specific property
     pub fn get_property_changes(&self, property_name: &str) -> Vec<&PropertyChange> {
-        self.changes.iter()
+        self.changes
+            .iter()
             .filter(|change| change.property_name() == property_name)
             .collect()
     }
@@ -475,10 +554,12 @@ impl PrinterChanges {
         if self.changes.is_empty() {
             return "No changes detected".to_string();
         }
-        
-        format!("{} properties changed: {}", 
+
+        format!(
+            "{} properties changed: {}",
             self.changes.len(),
-            self.changes.iter()
+            self.changes
+                .iter()
                 .map(|c| c.property_name())
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -765,7 +846,7 @@ impl Printer {
             24 => "Server Unknown",
             25 => "Power Save",
             128 => "Offline (Legacy)",
-            
+
             // Real-world bitwise flag values
             1024 => "Printing (Flag)",
             16384 => "Initialization (Flag)",
@@ -774,7 +855,7 @@ impl Printer {
             8192 => "Warming Up (Flag)",
             32768 => "Paper Out (Flag)",
             65536 => "Error (Flag)",
-            
+
             // For unknown values, try to interpret flags
             _ => {
                 if code & 1024 != 0 {
@@ -844,7 +925,7 @@ impl Printer {
     /// Compares this printer with another and returns detailed changes
     pub fn compare_with(&self, other: &Printer) -> PrinterChanges {
         let mut changes = PrinterChanges::new(self.name.clone());
-        
+
         // Check each property for changes
         if self.name != other.name {
             changes.changes.push(PropertyChange::Name {
@@ -852,84 +933,90 @@ impl Printer {
                 new: other.name.clone(),
             });
         }
-        
+
         if self.status != other.status {
             changes.changes.push(PropertyChange::Status {
                 old: self.status.clone(),
                 new: other.status.clone(),
             });
         }
-        
+
         if self.state != other.state {
             changes.changes.push(PropertyChange::State {
                 old: self.state.clone(),
                 new: other.state.clone(),
             });
         }
-        
+
         if self.error_state != other.error_state {
             changes.changes.push(PropertyChange::ErrorState {
                 old: self.error_state.clone(),
                 new: other.error_state.clone(),
             });
         }
-        
+
         if self.is_offline != other.is_offline {
             changes.changes.push(PropertyChange::IsOffline {
                 old: self.is_offline,
                 new: other.is_offline,
             });
         }
-        
+
         if self.is_default != other.is_default {
             changes.changes.push(PropertyChange::IsDefault {
                 old: self.is_default,
                 new: other.is_default,
             });
         }
-        
+
         if self.printer_status_code != other.printer_status_code {
             changes.changes.push(PropertyChange::PrinterStatusCode {
                 old: self.printer_status_code,
                 new: other.printer_status_code,
             });
         }
-        
+
         if self.printer_state_code != other.printer_state_code {
             changes.changes.push(PropertyChange::PrinterStateCode {
                 old: self.printer_state_code,
                 new: other.printer_state_code,
             });
         }
-        
+
         if self.detected_error_state_code != other.detected_error_state_code {
-            changes.changes.push(PropertyChange::DetectedErrorStateCode {
-                old: self.detected_error_state_code,
-                new: other.detected_error_state_code,
-            });
+            changes
+                .changes
+                .push(PropertyChange::DetectedErrorStateCode {
+                    old: self.detected_error_state_code,
+                    new: other.detected_error_state_code,
+                });
         }
-        
+
         if self.extended_detected_error_state_code != other.extended_detected_error_state_code {
-            changes.changes.push(PropertyChange::ExtendedDetectedErrorStateCode {
-                old: self.extended_detected_error_state_code,
-                new: other.extended_detected_error_state_code,
-            });
+            changes
+                .changes
+                .push(PropertyChange::ExtendedDetectedErrorStateCode {
+                    old: self.extended_detected_error_state_code,
+                    new: other.extended_detected_error_state_code,
+                });
         }
-        
+
         if self.extended_printer_status_code != other.extended_printer_status_code {
-            changes.changes.push(PropertyChange::ExtendedPrinterStatusCode {
-                old: self.extended_printer_status_code,
-                new: other.extended_printer_status_code,
-            });
+            changes
+                .changes
+                .push(PropertyChange::ExtendedPrinterStatusCode {
+                    old: self.extended_printer_status_code,
+                    new: other.extended_printer_status_code,
+                });
         }
-        
+
         if self.wmi_status != other.wmi_status {
             changes.changes.push(PropertyChange::WmiStatus {
                 old: self.wmi_status.clone(),
                 new: other.wmi_status.clone(),
             });
         }
-        
+
         changes
     }
 }
