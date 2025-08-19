@@ -28,7 +28,7 @@ async fn monitor_printer_cli(printer_name: &str) -> Result<(), PrinterError> {
     println!("Press Ctrl+C to stop\n");
 
     monitor
-        .monitor_printer(printer_name, 60, |current, previous| {
+        .monitor_printer(printer_name, 60000, |current, previous| {
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
 
             if let Some(prev) = previous {

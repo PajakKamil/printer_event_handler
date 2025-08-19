@@ -94,17 +94,18 @@ Advanced async usage patterns:
 - Stream processing of printer updates
 
 ### [`property_monitoring.rs`](property_monitoring.rs)
-Property-level change monitoring and detection:
+Property-level change monitoring and detection with type-safe property selection:
 - Individual property change tracking
 - Detailed change descriptions
-- Specific property monitoring (e.g., only "IsOffline" changes)
+- Specific property monitoring using `MonitorableProperty` enum
 - Multi-printer concurrent monitoring
 
 **Features shown:**
 - `monitor_printer_changes()` for detailed change detection
-- `monitor_property()` for specific property watching
+- `monitor_property()` with type-safe `MonitorableProperty` enum
 - `monitor_multiple_printers()` for concurrent monitoring
 - `PropertyChange` and `PrinterChanges` types
+- Type-safe property selection (e.g., `MonitorableProperty::IsOffline`)
 - Property-specific callbacks and filtering
 
 ## Key WMI Properties Demonstrated

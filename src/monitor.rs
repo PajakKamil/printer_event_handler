@@ -4,6 +4,97 @@ use log::{error, info, warn};
 use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
 
+/// Enum representing all available printer properties that can be monitored.
+///
+/// This enum provides type-safe access to all printer properties that can be
+/// monitored for changes, replacing string-based property names with a
+/// strongly-typed interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MonitorableProperty {
+    /// Printer name changes
+    Name,
+    /// PrinterStatus enum changes (recommended current status)
+    Status,
+    /// PrinterState enum changes (legacy Windows state)
+    State,
+    /// ErrorState enum changes
+    ErrorState,
+    /// Online/offline status changes
+    IsOffline,
+    /// Default printer designation changes
+    IsDefault,
+    /// Raw PrinterStatus code changes (1-7)
+    PrinterStatusCode,
+    /// Raw PrinterState code changes (.NET flags)
+    PrinterStateCode,
+    /// Raw DetectedErrorState code changes (0-11)
+    DetectedErrorStateCode,
+    /// Raw ExtendedDetectedErrorState code changes
+    ExtendedDetectedErrorStateCode,
+    /// Raw ExtendedPrinterStatus code changes
+    ExtendedPrinterStatusCode,
+    /// WMI Status property changes ("OK", "Error", etc.)
+    WmiStatus,
+}
+
+impl MonitorableProperty {
+    /// Returns the string representation of the property name.
+    ///
+    /// This matches the property names used in the PropertyChange enum.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MonitorableProperty::Name => "Name",
+            MonitorableProperty::Status => "Status",
+            MonitorableProperty::State => "State",
+            MonitorableProperty::ErrorState => "ErrorState",
+            MonitorableProperty::IsOffline => "IsOffline",
+            MonitorableProperty::IsDefault => "IsDefault",
+            MonitorableProperty::PrinterStatusCode => "PrinterStatusCode",
+            MonitorableProperty::PrinterStateCode => "PrinterStateCode",
+            MonitorableProperty::DetectedErrorStateCode => "DetectedErrorStateCode",
+            MonitorableProperty::ExtendedDetectedErrorStateCode => "ExtendedDetectedErrorStateCode",
+            MonitorableProperty::ExtendedPrinterStatusCode => "ExtendedPrinterStatusCode",
+            MonitorableProperty::WmiStatus => "WmiStatus",
+        }
+    }
+
+    /// Returns a human-readable description of what this property represents.
+    pub fn description(&self) -> &'static str {
+        match self {
+            MonitorableProperty::Name => "Printer name",
+            MonitorableProperty::Status => "Current printer status (recommended)",
+            MonitorableProperty::State => "Printer state (legacy Windows property)",
+            MonitorableProperty::ErrorState => "Current error condition",
+            MonitorableProperty::IsOffline => "Online/offline status",
+            MonitorableProperty::IsDefault => "Default printer designation",
+            MonitorableProperty::PrinterStatusCode => "Raw printer status code (1-7)",
+            MonitorableProperty::PrinterStateCode => "Raw printer state code (.NET flags)",
+            MonitorableProperty::DetectedErrorStateCode => "Raw detected error state code (0-11)",
+            MonitorableProperty::ExtendedDetectedErrorStateCode => "Extended error state code",
+            MonitorableProperty::ExtendedPrinterStatusCode => "Extended printer status code",
+            MonitorableProperty::WmiStatus => "WMI status property",
+        }
+    }
+
+    /// Returns all available properties that can be monitored.
+    pub fn all() -> Vec<MonitorableProperty> {
+        vec![
+            MonitorableProperty::Name,
+            MonitorableProperty::Status,
+            MonitorableProperty::State,
+            MonitorableProperty::ErrorState,
+            MonitorableProperty::IsOffline,
+            MonitorableProperty::IsDefault,
+            MonitorableProperty::PrinterStatusCode,
+            MonitorableProperty::PrinterStateCode,
+            MonitorableProperty::DetectedErrorStateCode,
+            MonitorableProperty::ExtendedDetectedErrorStateCode,
+            MonitorableProperty::ExtendedPrinterStatusCode,
+            MonitorableProperty::WmiStatus,
+        ]
+    }
+}
+
 /// Printer monitoring and querying functionality
 pub struct PrinterMonitor {
     backend: Box<dyn PrinterBackend>,
@@ -104,13 +195,13 @@ impl PrinterMonitor {
 
     /// Continuously monitors a specific printer for status changes.
     ///
-    /// This function runs indefinitely, polling the specified printer every `interval_secs`
-    /// seconds and calling the provided callback function whenever the printer's status changes.
+    /// This function runs indefinitely, polling the specified printer every `interval_ms`
+    /// milliseconds and calling the provided callback function whenever the printer's status changes.
     /// The callback receives both the current printer state and the previous state (if any).
     ///
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
-    /// * `interval_secs` - Polling interval in seconds
+    /// * `interval_ms` - Polling interval in milliseconds
     /// * `callback` - Function called when printer status changes, receives (current, previous)
     ///
     /// # Returns
@@ -136,7 +227,7 @@ impl PrinterMonitor {
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     
-    ///     monitor.monitor_printer("HP LaserJet", 30, |current, previous| {
+    ///     monitor.monitor_printer("HP LaserJet", 30000, |current, previous| {
     ///         if let Some(prev) = previous {
     ///             if prev != current {
     ///                 println!("Status changed: {} -> {}",
@@ -152,7 +243,7 @@ impl PrinterMonitor {
     pub async fn monitor_printer<F>(
         &self,
         printer_name: &str,
-        interval_secs: u64,
+        interval_ms: u64,
         mut callback: F,
     ) -> Result<()>
     where
@@ -165,6 +256,7 @@ impl PrinterMonitor {
         loop {
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
+                    println!("[{}] Checking printer: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"), current_printer.name());
                     let has_changed = previous_printer
                         .as_ref()
                         .map(|prev| prev != &current_printer)
@@ -206,7 +298,7 @@ impl PrinterMonitor {
                 }
             }
 
-            sleep(Duration::from_secs(interval_secs)).await;
+            sleep(Duration::from_millis(interval_ms)).await;
         }
     }
 
@@ -265,7 +357,7 @@ impl PrinterMonitor {
     ///
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
-    /// * `interval_secs` - Polling interval in seconds
+    /// * `interval_ms` - Polling interval in milliseconds
     /// * `callback` - Function called when properties change, receives PrinterChanges
     ///
     /// # Returns
@@ -279,7 +371,7 @@ impl PrinterMonitor {
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     
-    ///     monitor.monitor_printer_changes("HP LaserJet", 30, |changes| {
+    ///     monitor.monitor_printer_changes("HP LaserJet", 30000, |changes| {
     ///         if changes.has_changes() {
     ///             println!("Detected {} changes:", changes.change_count());
     ///             for change in &changes.changes {
@@ -292,7 +384,7 @@ impl PrinterMonitor {
     pub async fn monitor_printer_changes<F>(
         &self,
         printer_name: &str,
-        interval_secs: u64,
+        interval_ms: u64,
         mut callback: F,
     ) -> Result<()>
     where
@@ -341,30 +433,30 @@ impl PrinterMonitor {
                 }
             }
 
-            sleep(Duration::from_secs(interval_secs)).await;
+            sleep(Duration::from_millis(interval_ms)).await;
         }
     }
 
     /// Monitors a specific property of a printer for changes.
     ///
     /// This method allows monitoring just a single property, useful for alerting
-    /// on specific conditions like "IsOffline" or "Status" changes.
+    /// on specific conditions like offline status or error state changes.
     ///
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
-    /// * `property_name` - The specific property to watch (e.g., "IsOffline", "Status")
-    /// * `interval_secs` - Polling interval in seconds
+    /// * `property` - The specific property to watch using MonitorableProperty enum
+    /// * `interval_ms` - Polling interval in milliseconds
     /// * `callback` - Function called when the property changes
     ///
     /// # Example
     /// ```rust,no_run
-    /// use printer_event_handler::PrinterMonitor;
+    /// use printer_event_handler::{PrinterMonitor, MonitorableProperty};
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     
-    ///     monitor.monitor_property("HP LaserJet", "IsOffline", 60, |change| {
+    ///     monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
     ///         println!("Offline status changed: {}", change.description());
     ///     }).await.unwrap();
     /// }
@@ -372,16 +464,17 @@ impl PrinterMonitor {
     pub async fn monitor_property<F>(
         &self,
         printer_name: &str,
-        property_name: &str,
-        interval_secs: u64,
+        property: MonitorableProperty,
+        interval_ms: u64,
         mut callback: F,
     ) -> Result<()>
     where
         F: FnMut(&crate::PropertyChange) + Send,
     {
+        let property_name = property.as_str();
         info!("Starting property '{}' monitoring for printer: {}", property_name, printer_name);
 
-        self.monitor_printer_changes(printer_name, interval_secs, move |changes| {
+        self.monitor_printer_changes(printer_name, interval_ms, move |changes| {
             for change in &changes.changes {
                 if change.property_name() == property_name {
                     callback(change);
@@ -397,7 +490,7 @@ impl PrinterMonitor {
     ///
     /// # Arguments
     /// * `printer_names` - List of printer names to monitor
-    /// * `interval_secs` - Polling interval in seconds
+    /// * `interval_ms` - Polling interval in milliseconds
     /// * `callback` - Function called when any printer changes
     ///
     /// # Example
@@ -409,7 +502,7 @@ impl PrinterMonitor {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     let printers = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
     ///     
-    ///     monitor.monitor_multiple_printers(printers, 30, |changes| {
+    ///     monitor.monitor_multiple_printers(printers, 30000, |changes| {
     ///         println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
     ///     }).await.unwrap();
     /// }
@@ -417,7 +510,7 @@ impl PrinterMonitor {
     pub async fn monitor_multiple_printers<F>(
         &self,
         printer_names: Vec<String>,
-        interval_secs: u64,
+        interval_ms: u64,
         callback: F,
     ) -> Result<()>
     where
@@ -439,7 +532,7 @@ impl PrinterMonitor {
                 // This is a bit tricky - we can't easily clone self, so we need to create a new monitor
                 // In practice, you'd want to refactor this to share the backend more efficiently
                 let new_monitor = PrinterMonitor::new().await?;
-                new_monitor.monitor_printer_changes(&printer_name_clone, interval_secs, move |changes| {
+                new_monitor.monitor_printer_changes(&printer_name_clone, interval_ms, move |changes| {
                     callback_clone(changes);
                 }).await
             });

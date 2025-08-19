@@ -5,6 +5,142 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2025-08-19
+
+### Changed
+
+#### Millisecond Precision Intervals - BREAKING CHANGE
+- **Parameter change**: All monitoring functions now use milliseconds instead of seconds for interval parameters
+- **Function signatures updated**: `interval_secs: u64` → `interval_ms: u64` in all monitoring methods:
+  - `monitor_printer(printer_name, interval_ms, callback)`
+  - `monitor_printer_changes(printer_name, interval_ms, callback)`
+  - `monitor_property(printer_name, property, interval_ms, callback)`
+  - `monitor_multiple_printers(printer_names, interval_ms, callback)`
+
+### Added
+
+#### Enhanced Monitoring Precision
+- **Sub-second monitoring**: Can now monitor printer changes at intervals less than 1 second
+- **Millisecond granularity**: Precise control over monitoring frequency (100ms, 500ms, etc.)
+- **Common interval examples**: Documentation includes common millisecond values for different use cases
+- **High-frequency monitoring**: Support for rapid change detection in time-sensitive applications
+
+### Updated
+
+#### Documentation and Examples
+- **README.md**: Updated all examples to use millisecond values (30000ms instead of 30s)
+- **Code examples**: All monitoring examples updated with millisecond intervals
+- **CLI application**: Updated to use 60000ms (60 seconds) instead of 60s
+- **Library documentation**: Updated inline documentation and code examples
+- **Examples directory**: All example files updated to use millisecond precision
+
+### Migration Guide
+
+**Before (v1.3.1 and earlier - seconds):**
+```rust
+// 30 seconds interval (using seconds)
+monitor.monitor_printer("Printer", 30, callback).await?;
+monitor.monitor_property("Printer", property, 60, callback).await?;
+```
+
+**After (v1.3.2+ - milliseconds):**
+```rust
+// 30 seconds = 30000 milliseconds
+monitor.monitor_printer("Printer", 30000, callback).await?;
+monitor.monitor_property("Printer", property, 60000, callback).await?;
+
+// New precision capabilities:
+monitor.monitor_printer("Printer", 500, callback).await?;  // 0.5 seconds
+monitor.monitor_printer("Printer", 100, callback).await?;  // 0.1 seconds
+```
+
+**Migration Steps:**
+1. Multiply all existing interval values by 1000
+2. Consider if you need higher precision monitoring (sub-second intervals)
+3. Update any hardcoded interval values in your code
+
+### Technical Details
+- **Performance**: No performance impact - same underlying `Duration::from_millis()` usage
+- **Precision**: Can now handle intervals as low as 1ms (though not recommended for printer monitoring)
+- **Backward compatibility**: Breaking change - requires code updates for interval values
+- **Cross-platform**: Works identically on Windows and Linux
+
+### Benefits
+- **Fine-grained control**: Monitor rapid printer state changes in real-time applications
+- **Flexible intervals**: Choose optimal monitoring frequency for different use cases
+- **Better responsiveness**: Detect printer changes faster when needed
+- **Production flexibility**: Adjust monitoring precision based on system requirements
+
+## [1.3.1] - 2025-08-19
+
+### Added
+
+#### Type-Safe Property Monitoring
+- **`MonitorableProperty` enum** - New strongly-typed enum for specifying properties to monitor
+- **Type-safe `monitor_property()` API** - Replaces string-based property names with enum variants
+- **Complete property coverage** - All 12 monitorable printer properties available as enum variants:
+  - `Name` - Printer name changes
+  - `Status` - PrinterStatus enum changes (recommended)
+  - `State` - PrinterState enum changes (legacy Windows)
+  - `ErrorState` - ErrorState enum changes
+  - `IsOffline` - Online/offline status changes
+  - `IsDefault` - Default printer designation changes
+  - `PrinterStatusCode` - Raw PrinterStatus code changes (1-7)
+  - `PrinterStateCode` - Raw PrinterState code changes (.NET flags)
+  - `DetectedErrorStateCode` - Raw DetectedErrorState code changes (0-11)
+  - `ExtendedDetectedErrorStateCode` - Raw ExtendedDetectedErrorState code changes
+  - `ExtendedPrinterStatusCode` - Raw ExtendedPrinterStatus code changes
+  - `WmiStatus` - WMI Status property changes
+
+### Enhanced
+
+#### Developer Experience
+- **IDE auto-completion** - MonitorableProperty enum provides IntelliSense support
+- **Compile-time validation** - Invalid property names caught at compile time instead of runtime
+- **Self-documenting code** - Each enum variant includes descriptive documentation
+- **Helper methods** - `as_str()`, `description()`, and `all()` methods for convenience
+
+#### API Improvements
+- **Backward compatible** - Internal string conversion maintains existing functionality
+- **Future-proof design** - Easy to add new properties while maintaining API stability
+- **Better error prevention** - Eliminates typos in property name strings
+
+### Updated
+
+#### Documentation
+- **README.md** - Added complete MonitorableProperty documentation with usage examples
+- **Library documentation** - Updated main example to showcase type-safe property monitoring
+- **Examples** - Updated `property_monitoring.rs` to use new enum-based API
+- **API Reference** - Added MonitorableProperty to core types documentation
+
+#### Examples
+- **`property_monitoring.rs`** - Now demonstrates type-safe property selection
+- **Type-safe examples** - Shows usage of `MonitorableProperty::IsOffline` and `MonitorableProperty::Status`
+
+### Migration Guide
+
+**Before (v1.3.0 and earlier):**
+```rust
+monitor.monitor_property("Printer", "IsOffline", 60, |change| {
+    println!("Change: {}", change.description());
+}).await?;
+```
+
+**After (v1.3.1+):**
+```rust
+use printer_event_handler::MonitorableProperty;
+
+monitor.monitor_property("Printer", MonitorableProperty::IsOffline, 60, |change| {
+    println!("Change: {}", change.description());
+}).await?;
+```
+
+### Technical Details
+- **No breaking changes** - Existing string-based usage still works internally
+- **Performance** - No runtime overhead, enum converts to string internally
+- **Compile-time safety** - Invalid properties caught during compilation
+- **Cross-platform** - Works identically on Windows and Linux
+
 ## [1.3.0] - 2025-01-18
 
 ### Fixed

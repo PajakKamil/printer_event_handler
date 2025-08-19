@@ -9,7 +9,8 @@ use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio::time::interval;
 
 #[tokio::main]

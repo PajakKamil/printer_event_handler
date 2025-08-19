@@ -9,7 +9,7 @@ A cross-platform Rust library for monitoring printer status and events on Window
 ## Features
 
 - 🖨️ **Cross-platform support** - Works on Windows (WMI) and Linux (CUPS)
-- 📊 **Real-time monitoring** - Monitor printer status changes with customizable intervals
+- 📊 **Real-time monitoring** - Monitor printer status changes with customizable intervals (millisecond precision)
 - 🔍 **Printer discovery** - List and find printers on your system
 - ⚡ **Async/await support** - Built on Tokio for efficient asynchronous operations
 - 🛡️ **Type-safe** - Strongly typed printer status and error states
@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.3.0"
+printer_event_handler = "1.3.2"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -59,8 +59,8 @@ use printer_event_handler::PrinterMonitor;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = PrinterMonitor::new().await?;
     
-    // Monitor a specific printer every 30 seconds
-    monitor.monitor_printer("HP LaserJet Pro", 30, |current, previous| {
+    // Monitor a specific printer every 30 seconds (interval in milliseconds)
+    monitor.monitor_printer("HP LaserJet Pro", 30000, |current, previous| {
         if let Some(prev) = previous {
             if prev != current {
                 println!("🔄 Status changed: {} → {}", 
@@ -147,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = PrinterMonitor::new().await?;
     
     // Monitor all property changes with detailed tracking
-    monitor.monitor_printer_changes("HP LaserJet", 30, |changes| {
+    monitor.monitor_printer_changes("HP LaserJet", 30000, |changes| {
         if changes.has_changes() {
             println!("🔄 {} changes detected in '{}':", 
                 changes.change_count(), changes.printer_name);
@@ -164,19 +164,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #### Monitor Specific Properties
 
-```rust
-// Monitor only offline status changes
-monitor.monitor_property("HP LaserJet", "IsOffline", 60, |change| {
-    println!("📶 Offline status: {}", change.description());
-}).await?;
+The library provides type-safe property monitoring using the `MonitorableProperty` enum:
 
+```rust
+use printer_event_handler::{PrinterMonitor, MonitorableProperty};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+    
+    // Monitor only offline status changes using type-safe enum
+    monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
+        println!("📶 Offline status: {}", change.description());
+    }).await?;
+    
+    // Monitor printer status changes
+    monitor.monitor_property("HP LaserJet", MonitorableProperty::Status, 30000, |change| {
+        println!("🔄 Status changed: {}", change.description());
+    }).await?;
+    
+    Ok(())
+}
+```
+
+##### Available Properties to Monitor
+
+The `MonitorableProperty` enum provides type-safe access to all monitorable printer properties:
+
+```rust
+pub enum MonitorableProperty {
+    Name,                            // Printer name changes
+    Status,                          // PrinterStatus enum changes (recommended)
+    State,                           // PrinterState enum changes (legacy Windows)
+    ErrorState,                      // ErrorState enum changes
+    IsOffline,                       // Online/offline status changes
+    IsDefault,                       // Default printer designation changes
+    PrinterStatusCode,               // Raw PrinterStatus code changes (1-7)
+    PrinterStateCode,                // Raw PrinterState code changes (.NET flags)
+    DetectedErrorStateCode,          // Raw DetectedErrorState code changes (0-11)
+    ExtendedDetectedErrorStateCode,  // Raw ExtendedDetectedErrorState code changes
+    ExtendedPrinterStatusCode,       // Raw ExtendedPrinterStatus code changes
+    WmiStatus,                       // WMI Status property changes
+}
+```
+
+##### Multiple Printer Monitoring
+
+```rust
 // Monitor multiple printers concurrently
 let printer_names = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
-monitor.monitor_multiple_printers(printer_names, 30, |changes| {
+monitor.monitor_multiple_printers(printer_names, 30000, |changes| {
     println!("🖨️  Multi-printer change: {} - {}", 
         changes.printer_name, changes.summary());
 }).await?;
 ```
+
+### Millisecond Precision Intervals
+
+All monitoring functions accept intervals in **milliseconds**, providing precise control over monitoring frequency:
+
+```rust
+// High-frequency monitoring (every 100ms)
+monitor.monitor_printer("Fast Printer", 100, |current, previous| {
+    // Handle rapid changes
+}).await?;
+
+// Standard monitoring (every 5 seconds)
+monitor.monitor_printer("Standard Printer", 5000, |current, previous| {
+    // Handle regular changes  
+}).await?;
+
+// Low-frequency monitoring (every 2 minutes)
+monitor.monitor_printer("Slow Printer", 120000, |current, previous| {
+    // Handle infrequent changes
+}).await?;
+```
+
+**Common Intervals:**
+- `100` = 100ms (0.1 seconds) - High frequency
+- `500` = 500ms (0.5 seconds) - Responsive
+- `1000` = 1 second - Standard
+- `5000` = 5 seconds - Moderate
+- `30000` = 30 seconds - Conservative
+- `60000` = 1 minute - Low frequency
 
 ## CLI Usage
 
@@ -275,6 +345,7 @@ sudo yum install cups  # or dnf install cups-client
 
 - **`PrinterMonitor`** - Main entry point for all printer operations
 - **`Printer`** - Represents a printer with complete WMI information and current state
+- **`MonitorableProperty`** - Type-safe enum for specifying properties to monitor
 - **`PrinterStatus`** - Printer status enum (current property, values 1-7)
 - **`PrinterState`** - Printer state enum (.NET PrintQueueStatus flags like 1024, 16384)
 - **`ErrorState`** - Error condition enum (NoError, Jammed, NoPaper, etc.)

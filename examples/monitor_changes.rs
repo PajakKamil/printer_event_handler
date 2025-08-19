@@ -45,14 +45,13 @@ async fn main() -> Result<(), PrinterError> {
     }
 
     println!("Starting printer monitoring...");
-    println!("   Checking every 10 seconds for changes");
+    println!("   Checking every 1 second for changes");
     println!("   Press Ctrl+C to stop\n");
 
     // Monitor printer with detailed change reporting
     monitor
-        .monitor_printer(&target_printer_name, 10, |current, previous| {
+        .monitor_printer(&target_printer_name, 1000, |current, previous| {
             let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
-
             if let Some(prev) = previous {
                 if prev != current {
                     println!("[{}] PRINTER STATUS CHANGED!", timestamp);

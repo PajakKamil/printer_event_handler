@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "printer_event_handler"
-version = "1.3.0"
+version = "1.3.2"
 dependencies = [
  "async-trait",
  "chrono",

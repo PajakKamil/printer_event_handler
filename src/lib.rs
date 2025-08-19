@@ -22,7 +22,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use printer_event_handler::{PrinterMonitor, PrinterError};
+//! use printer_event_handler::{PrinterMonitor, PrinterError, MonitorableProperty};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), PrinterError> {
@@ -46,6 +46,11 @@
 //!         }
 //!     }
 //!     
+//!     // Monitor specific property changes with type safety
+//!     monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
+//!         println!("Offline status changed: {}", change.description());
+//!     }).await?;
+//!     
 //!     Ok(())
 //! }
 //! ```
@@ -56,7 +61,7 @@ pub mod monitor;
 pub mod printer;
 
 pub use error::PrinterError;
-pub use monitor::PrinterMonitor;
+pub use monitor::{PrinterMonitor, MonitorableProperty};
 pub use printer::{ErrorState, Printer, PrinterState, PrinterStatus, PropertyChange, PrinterChanges};
 
 /// Result type used throughout the library
