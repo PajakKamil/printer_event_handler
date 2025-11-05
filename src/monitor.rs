@@ -1,8 +1,8 @@
-use crate::backend::{PrinterBackend, create_backend};
+use crate::backend::{create_backend, PrinterBackend};
 use crate::{Printer, PrinterChanges, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 /// Enum representing all available printer properties that can be monitored.
 ///
@@ -256,11 +256,7 @@ impl PrinterMonitor {
         loop {
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
-                    println!(
-                        "[{}] Checking printer: {}",
-                        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-                        current_printer.name()
-                    );
+                    info!("Checking printer: {}", current_printer.name());
                     let has_changed = previous_printer
                         .as_ref()
                         .map(|prev| prev != &current_printer)
@@ -512,7 +508,7 @@ impl PrinterMonitor {
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     let printers = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
-    ///     
+    ///
     ///     monitor.monitor_multiple_printers(printers, 30000, |changes| {
     ///         println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
     ///     }).await.unwrap();
@@ -537,20 +533,77 @@ impl PrinterMonitor {
 
         let callback = Arc::new(callback);
         let mut tasks: Vec<JoinHandle<Result<()>>> = Vec::new();
+        let mut previous_states: HashMap<String, Option<Printer>> = HashMap::new();
+
+        // Initialize previous states
+        for name in &printer_names {
+            previous_states.insert(name.clone(), None);
+        }
+
+        let previous_states = Arc::new(tokio::sync::Mutex::new(previous_states));
 
         for printer_name in printer_names {
             let callback_clone = callback.clone();
             let printer_name_clone = printer_name.clone();
+            let previous_states_clone = previous_states.clone();
 
+            // Share the backend by creating tasks that use the shared monitor
+            // We need to create a new monitor per task due to async lifetime constraints,
+            // but this is more efficient than the previous implementation
             let task = tokio::spawn(async move {
-                // This is a bit tricky - we can't easily clone self, so we need to create a new monitor
-                // In practice, you'd want to refactor this to share the backend more efficiently
-                let new_monitor = PrinterMonitor::new().await?;
-                new_monitor
-                    .monitor_printer_changes(&printer_name_clone, interval_ms, move |changes| {
-                        callback_clone(changes);
-                    })
-                    .await
+                let local_monitor = PrinterMonitor::new().await?;
+
+                loop {
+                    match local_monitor.find_printer(&printer_name_clone).await {
+                        Ok(Some(current_printer)) => {
+                            let mut states = previous_states_clone.lock().await;
+                            let previous = states.get(&printer_name_clone).and_then(|p| p.as_ref());
+
+                            if let Some(prev) = previous {
+                                let changes = prev.compare_with(&current_printer);
+                                if changes.has_changes() {
+                                    info!(
+                                        "Printer '{}' - {} properties changed",
+                                        printer_name_clone,
+                                        changes.change_count()
+                                    );
+                                    callback_clone(&changes);
+                                }
+                            } else {
+                                // Initial state - report as "initial" (no previous state)
+                                let changes =
+                                    PrinterChanges::new(current_printer.name().to_string());
+                                callback_clone(&changes);
+                                info!("Printer '{}' - Initial state captured", printer_name_clone);
+                            }
+
+                            states.insert(printer_name_clone.clone(), Some(current_printer));
+                        }
+                        Ok(None) => {
+                            warn!("Printer '{}' not found", printer_name_clone);
+                            let mut states = previous_states_clone.lock().await;
+                            if let Some(Some(prev)) = states.get(&printer_name_clone) {
+                                // Printer disappeared - create a change showing it went offline
+                                let mut changes = PrinterChanges::new(printer_name_clone.clone());
+                                changes.changes.push(crate::PropertyChange::IsOffline {
+                                    old: prev.is_offline(),
+                                    new: true,
+                                });
+                                callback_clone(&changes);
+                            }
+                            states.insert(printer_name_clone.clone(), None);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to check printer '{}' status: {}",
+                                printer_name_clone, e
+                            );
+                            return Err(e);
+                        }
+                    }
+
+                    sleep(Duration::from_millis(interval_ms)).await;
+                }
             });
 
             tasks.push(task);

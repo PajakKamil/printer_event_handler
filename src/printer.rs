@@ -1087,6 +1087,7 @@ impl PartialEq for Printer {
             && self.state == other.state
             && self.error_state == other.error_state
             && self.is_offline == other.is_offline
+            && self.is_default == other.is_default
             && self.printer_status_code == other.printer_status_code
             && self.printer_state_code == other.printer_state_code
             && self.detected_error_state_code == other.detected_error_state_code

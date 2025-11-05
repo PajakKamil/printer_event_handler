@@ -43,7 +43,10 @@ impl PrinterBackend for WindowsBackend {
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
             let com_con = COMLibrary::new().map_err(PrinterError::from)?;
             let wmi_connection = wmi::WMIConnection::new(com_con).map_err(PrinterError::from)?;
-            let printers: Vec<Win32Printer> = wmi_connection.raw_query("SELECT Name, PrinterStatus, DetectedErrorState, WorkOffline, PrinterState, Default, ExtendedPrinterStatus, ExtendedDetectedErrorState, Status FROM Win32_Printer").map_err(PrinterError::from)?;
+            // Use SELECT * to avoid issues with reserved keyword 'Default'
+            let printers: Vec<Win32Printer> = wmi_connection
+                .raw_query("SELECT * FROM Win32_Printer")
+                .map_err(PrinterError::from)?;
             Ok(printers)
         })
         .await
@@ -203,8 +206,8 @@ async fn get_default_printer() -> Option<String> {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                if line.starts_with("system default destination: ") {
-                    return Some(line.replace("system default destination: ", ""));
+                if let Some(name) = line.strip_prefix("system default destination: ") {
+                    return Some(name.to_string());
                 }
                 if line.starts_with("no system default destination") {
                     return None;
