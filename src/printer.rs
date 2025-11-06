@@ -1149,4 +1149,302 @@ mod tests {
             PrinterStatus::Other
         );
     }
+
+    #[test]
+    fn test_printer_equality_with_is_default() {
+        let printer1 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let printer2 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            false, // Different is_default
+        );
+
+        // Should not be equal because is_default differs
+        assert_ne!(printer1, printer2);
+    }
+
+    #[test]
+    fn test_printer_equality_complete() {
+        let printer1 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let printer2 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        assert_eq!(printer1, printer2);
+    }
+
+    #[test]
+    fn test_printer_state_is_error() {
+        assert!(PrinterState::Error.is_error());
+        assert!(PrinterState::PaperJam.is_error());
+        assert!(PrinterState::PaperOut.is_error());
+        assert!(PrinterState::DoorOpen.is_error());
+        assert!(PrinterState::OutOfMemory.is_error());
+        assert!(PrinterState::UserInterventionRequired.is_error());
+
+        assert!(!PrinterState::None.is_error());
+        assert!(!PrinterState::WarmingUp.is_error());
+        assert!(!PrinterState::Printing.is_error());
+    }
+
+    #[test]
+    fn test_printer_state_is_offline() {
+        assert!(PrinterState::Offline.is_offline());
+        assert!(PrinterState::NotAvailable.is_offline());
+        assert!(PrinterState::ServerUnknown.is_offline());
+
+        assert!(!PrinterState::Printing.is_offline());
+        assert!(!PrinterState::None.is_offline());
+    }
+
+    #[test]
+    fn test_property_change_name() {
+        let change = PropertyChange::Name {
+            old: "Old Name".to_string(),
+            new: "New Name".to_string(),
+        };
+
+        assert_eq!(change.property_name(), "Name");
+        assert!(change.description().contains("Old Name"));
+        assert!(change.description().contains("New Name"));
+    }
+
+    #[test]
+    fn test_property_change_status() {
+        let change = PropertyChange::Status {
+            old: PrinterStatus::Idle,
+            new: PrinterStatus::Printing,
+        };
+
+        assert_eq!(change.property_name(), "Status");
+        assert!(change.description().contains("Idle"));
+        assert!(change.description().contains("Printing"));
+    }
+
+    #[test]
+    fn test_printer_changes_new() {
+        let changes = PrinterChanges::new("Test Printer".to_string());
+
+        assert_eq!(changes.printer_name, "Test Printer");
+        assert!(!changes.has_changes());
+        assert_eq!(changes.change_count(), 0);
+    }
+
+    #[test]
+    fn test_printer_changes_has_property_change() {
+        let mut changes = PrinterChanges::new("Test Printer".to_string());
+
+        changes.changes.push(PropertyChange::IsOffline {
+            old: false,
+            new: true,
+        });
+
+        assert!(changes.has_changes());
+        assert_eq!(changes.change_count(), 1);
+        assert!(changes.has_property_change("IsOffline"));
+        assert!(!changes.has_property_change("Status"));
+    }
+
+    #[test]
+    fn test_printer_compare_with_no_changes() {
+        let printer1 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let printer2 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let changes = printer1.compare_with(&printer2);
+        assert!(!changes.has_changes());
+    }
+
+    #[test]
+    fn test_printer_compare_with_status_change() {
+        let printer1 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let printer2 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Printing,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let changes = printer1.compare_with(&printer2);
+        assert!(changes.has_changes());
+        assert_eq!(changes.change_count(), 1);
+        assert!(changes.has_property_change("Status"));
+    }
+
+    #[test]
+    fn test_printer_compare_with_multiple_changes() {
+        let printer1 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            false,
+            true,
+        );
+
+        let printer2 = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Printing,
+            ErrorState::Jammed,
+            true,
+            false,
+        );
+
+        let changes = printer1.compare_with(&printer2);
+        assert!(changes.has_changes());
+        assert!(changes.change_count() >= 4); // Status, ErrorState, IsOffline, IsDefault
+        assert!(changes.has_property_change("Status"));
+        assert!(changes.has_property_change("ErrorState"));
+        assert!(changes.has_property_change("IsOffline"));
+        assert!(changes.has_property_change("IsDefault"));
+    }
+
+    #[test]
+    fn test_error_state_descriptions() {
+        assert_eq!(ErrorState::NoError.description(), "No Error");
+        assert_eq!(ErrorState::Jammed.description(), "Jammed");
+        assert_eq!(ErrorState::NoPaper.description(), "No Paper");
+        assert_eq!(ErrorState::LowPaper.description(), "Low Paper");
+        assert_eq!(ErrorState::NoToner.description(), "No Toner");
+        assert_eq!(ErrorState::DoorOpen.description(), "Door Open");
+    }
+
+    #[test]
+    fn test_printer_status_descriptions() {
+        assert_eq!(PrinterStatus::Idle.description(), "Idle");
+        assert_eq!(PrinterStatus::Printing.description(), "Printing");
+        assert_eq!(PrinterStatus::Offline.description(), "Offline");
+        assert_eq!(PrinterStatus::Warmup.description(), "Warming Up");
+    }
+
+    #[test]
+    fn test_printer_state_descriptions() {
+        assert_eq!(PrinterState::PaperJam.description(), "Paper Jam");
+        assert_eq!(PrinterState::TonerLow.description(), "Toner Low");
+        assert_eq!(PrinterState::Printing.description(), "Printing");
+        assert_eq!(PrinterState::DoorOpen.description(), "Door Open");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_printer_status_from_u32() {
+        assert_eq!(PrinterStatus::from_u32(Some(1)), PrinterStatus::Other);
+        assert_eq!(PrinterStatus::from_u32(Some(2)), PrinterStatus::Unknown);
+        assert_eq!(PrinterStatus::from_u32(Some(3)), PrinterStatus::Idle);
+        assert_eq!(PrinterStatus::from_u32(Some(4)), PrinterStatus::Printing);
+        assert_eq!(PrinterStatus::from_u32(Some(5)), PrinterStatus::Warmup);
+        assert_eq!(
+            PrinterStatus::from_u32(Some(6)),
+            PrinterStatus::StoppedPrinting
+        );
+        assert_eq!(PrinterStatus::from_u32(Some(7)), PrinterStatus::Offline);
+        assert_eq!(
+            PrinterStatus::from_u32(Some(99)),
+            PrinterStatus::StatusUnknown
+        );
+        assert_eq!(PrinterStatus::from_u32(None), PrinterStatus::StatusUnknown);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_printer_state_from_u32_bitwise_flags() {
+        // Test individual flags
+        assert_eq!(PrinterState::from_u32(0), PrinterState::None);
+        assert_eq!(PrinterState::from_u32(1), PrinterState::Paused);
+        assert_eq!(PrinterState::from_u32(2), PrinterState::Error);
+        assert_eq!(PrinterState::from_u32(8), PrinterState::PaperJam);
+        assert_eq!(PrinterState::from_u32(1024), PrinterState::Printing);
+        assert_eq!(PrinterState::from_u32(16384), PrinterState::Processing);
+
+        // Test priority: Error states take precedence
+        assert_eq!(
+            PrinterState::from_u32(2 | 1024),
+            PrinterState::Error
+        ); // Error + Printing -> Error
+
+        // Test priority: DoorOpen is highest priority error
+        assert_eq!(
+            PrinterState::from_u32(4194304 | 2),
+            PrinterState::DoorOpen
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_error_state_from_u32() {
+        assert_eq!(ErrorState::from_u32(Some(0)), ErrorState::NoError);
+        assert_eq!(ErrorState::from_u32(Some(1)), ErrorState::Other);
+        assert_eq!(ErrorState::from_u32(Some(2)), ErrorState::NoError);
+        assert_eq!(ErrorState::from_u32(Some(3)), ErrorState::LowPaper);
+        assert_eq!(ErrorState::from_u32(Some(4)), ErrorState::NoPaper);
+        assert_eq!(ErrorState::from_u32(Some(5)), ErrorState::LowToner);
+        assert_eq!(ErrorState::from_u32(Some(6)), ErrorState::NoToner);
+        assert_eq!(ErrorState::from_u32(Some(7)), ErrorState::DoorOpen);
+        assert_eq!(ErrorState::from_u32(Some(8)), ErrorState::Jammed);
+        assert_eq!(ErrorState::from_u32(Some(10)), ErrorState::ServiceRequested);
+        assert_eq!(ErrorState::from_u32(Some(11)), ErrorState::OutputBinFull);
+        assert_eq!(ErrorState::from_u32(Some(99)), ErrorState::UnknownError);
+        assert_eq!(ErrorState::from_u32(None), ErrorState::UnknownError);
+    }
+
+    #[test]
+    fn test_changes_summary() {
+        let mut changes = PrinterChanges::new("Test Printer".to_string());
+
+        assert_eq!(changes.summary(), "No changes detected");
+
+        changes.changes.push(PropertyChange::Status {
+            old: PrinterStatus::Idle,
+            new: PrinterStatus::Printing,
+        });
+
+        changes.changes.push(PropertyChange::IsOffline {
+            old: false,
+            new: true,
+        });
+
+        let summary = changes.summary();
+        assert!(summary.contains("2 properties changed"));
+        assert!(summary.contains("Status"));
+        assert!(summary.contains("IsOffline"));
+    }
 }

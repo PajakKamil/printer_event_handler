@@ -64,3 +64,121 @@ impl From<Box<dyn std::error::Error>> for PrinterError {
         PrinterError::Other(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn test_wmi_error_display() {
+        let err = PrinterError::WmiError("Connection failed".to_string());
+        assert_eq!(err.to_string(), "WMI error: Connection failed");
+    }
+
+    #[test]
+    fn test_cups_error_display() {
+        let err = PrinterError::CupsError("CUPS not available".to_string());
+        assert_eq!(err.to_string(), "CUPS error: CUPS not available");
+    }
+
+    #[test]
+    fn test_printer_not_found_display() {
+        let err = PrinterError::PrinterNotFound("HP LaserJet".to_string());
+        assert_eq!(err.to_string(), "Printer 'HP LaserJet' not found");
+    }
+
+    #[test]
+    fn test_platform_not_supported_display() {
+        let err = PrinterError::PlatformNotSupported;
+        assert_eq!(err.to_string(), "This platform is not supported");
+    }
+
+    #[test]
+    fn test_io_error_display() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = PrinterError::IoError(io_err);
+        assert!(err.to_string().contains("I/O error"));
+        assert!(err.to_string().contains("file not found"));
+    }
+
+    #[test]
+    fn test_other_error_display() {
+        let err = PrinterError::Other("Custom error message".to_string());
+        assert_eq!(err.to_string(), "Custom error message");
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let printer_err: PrinterError = io_err.into();
+
+        match printer_err {
+            PrinterError::IoError(_) => {} // Expected
+            _ => panic!("Should convert to IoError variant"),
+        }
+    }
+
+    #[test]
+    fn test_from_boxed_error() {
+        let boxed_err: Box<dyn std::error::Error> =
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test error"));
+        let printer_err: PrinterError = boxed_err.into();
+
+        match printer_err {
+            PrinterError::Other(msg) => {
+                assert!(msg.contains("test error"));
+            }
+            _ => panic!("Should convert to Other variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_source_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let err = PrinterError::IoError(io_err);
+
+        // IoError should have a source
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_error_source_other_errors() {
+        // Other error types shouldn't have a source
+        assert!(PrinterError::WmiError("test".to_string())
+            .source()
+            .is_none());
+        assert!(PrinterError::CupsError("test".to_string())
+            .source()
+            .is_none());
+        assert!(PrinterError::PrinterNotFound("test".to_string())
+            .source()
+            .is_none());
+        assert!(PrinterError::PlatformNotSupported.source().is_none());
+        assert!(PrinterError::Other("test".to_string()).source().is_none());
+    }
+
+    #[test]
+    fn test_error_debug_format() {
+        let err = PrinterError::WmiError("test error".to_string());
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("WmiError"));
+        assert!(debug_str.contains("test error"));
+    }
+
+    #[test]
+    fn test_all_error_variants_are_error_trait() {
+        // Test that all variants implement std::error::Error
+        fn is_error<E: std::error::Error>(_: &E) {}
+
+        is_error(&PrinterError::WmiError("test".to_string()));
+        is_error(&PrinterError::CupsError("test".to_string()));
+        is_error(&PrinterError::PrinterNotFound("test".to_string()));
+        is_error(&PrinterError::PlatformNotSupported);
+        is_error(&PrinterError::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "test",
+        )));
+        is_error(&PrinterError::Other("test".to_string()));
+    }
+}

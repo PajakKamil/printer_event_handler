@@ -671,4 +671,173 @@ mod tests {
         // On Unix/Linux, the monitor should be created successfully
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_monitorable_property_as_str() {
+        assert_eq!(MonitorableProperty::Name.as_str(), "Name");
+        assert_eq!(MonitorableProperty::Status.as_str(), "Status");
+        assert_eq!(MonitorableProperty::State.as_str(), "State");
+        assert_eq!(MonitorableProperty::ErrorState.as_str(), "ErrorState");
+        assert_eq!(MonitorableProperty::IsOffline.as_str(), "IsOffline");
+        assert_eq!(MonitorableProperty::IsDefault.as_str(), "IsDefault");
+        assert_eq!(
+            MonitorableProperty::PrinterStatusCode.as_str(),
+            "PrinterStatusCode"
+        );
+        assert_eq!(
+            MonitorableProperty::PrinterStateCode.as_str(),
+            "PrinterStateCode"
+        );
+        assert_eq!(
+            MonitorableProperty::DetectedErrorStateCode.as_str(),
+            "DetectedErrorStateCode"
+        );
+        assert_eq!(
+            MonitorableProperty::ExtendedDetectedErrorStateCode.as_str(),
+            "ExtendedDetectedErrorStateCode"
+        );
+        assert_eq!(
+            MonitorableProperty::ExtendedPrinterStatusCode.as_str(),
+            "ExtendedPrinterStatusCode"
+        );
+        assert_eq!(MonitorableProperty::WmiStatus.as_str(), "WmiStatus");
+    }
+
+    #[test]
+    fn test_monitorable_property_description() {
+        assert_eq!(MonitorableProperty::Name.description(), "Printer name");
+        assert_eq!(
+            MonitorableProperty::Status.description(),
+            "Current printer status (recommended)"
+        );
+        assert_eq!(
+            MonitorableProperty::State.description(),
+            "Printer state (legacy Windows property)"
+        );
+        assert_eq!(
+            MonitorableProperty::IsOffline.description(),
+            "Online/offline status"
+        );
+    }
+
+    #[test]
+    fn test_monitorable_property_all() {
+        let all = MonitorableProperty::all();
+        assert_eq!(all.len(), 12);
+
+        // Verify all variants are present
+        assert!(all.contains(&MonitorableProperty::Name));
+        assert!(all.contains(&MonitorableProperty::Status));
+        assert!(all.contains(&MonitorableProperty::State));
+        assert!(all.contains(&MonitorableProperty::ErrorState));
+        assert!(all.contains(&MonitorableProperty::IsOffline));
+        assert!(all.contains(&MonitorableProperty::IsDefault));
+        assert!(all.contains(&MonitorableProperty::PrinterStatusCode));
+        assert!(all.contains(&MonitorableProperty::PrinterStateCode));
+        assert!(all.contains(&MonitorableProperty::DetectedErrorStateCode));
+        assert!(all.contains(&MonitorableProperty::ExtendedDetectedErrorStateCode));
+        assert!(all.contains(&MonitorableProperty::ExtendedPrinterStatusCode));
+        assert!(all.contains(&MonitorableProperty::WmiStatus));
+    }
+
+    #[test]
+    fn test_monitorable_property_equality() {
+        assert_eq!(MonitorableProperty::Status, MonitorableProperty::Status);
+        assert_ne!(MonitorableProperty::Status, MonitorableProperty::State);
+    }
+
+    #[test]
+    fn test_printer_summary_structure() {
+        use crate::{ErrorState, PrinterStatus};
+
+        let summary = PrinterSummary {
+            status: PrinterStatus::Idle,
+            error_state: ErrorState::NoError,
+            is_offline: false,
+            is_default: true,
+            has_error: false,
+        };
+
+        assert_eq!(summary.status, PrinterStatus::Idle);
+        assert_eq!(summary.error_state, ErrorState::NoError);
+        assert!(!summary.is_offline);
+        assert!(summary.is_default);
+        assert!(!summary.has_error);
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_list_printers_windows() {
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let printers = monitor.list_printers().await;
+            // Either we get printers or an error, but it should return something
+            match printers {
+                Ok(printer_list) => {
+                    println!("Found {} printers", printer_list.len());
+                }
+                Err(e) => {
+                    println!("Expected error in test environment: {}", e);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_list_printers_unix() {
+        let monitor = PrinterMonitor::new().await;
+        assert!(monitor.is_ok());
+
+        if let Ok(monitor) = monitor {
+            let printers = monitor.list_printers().await;
+            // Should return either printers or an error, but not panic
+            match printers {
+                Ok(printer_list) => {
+                    println!("Found {} printers", printer_list.len());
+                }
+                Err(e) => {
+                    println!("Expected error in test environment: {}", e);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_nonexistent_printer() {
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let result = monitor
+                .find_printer("NonExistentPrinter_12345_ABCDE")
+                .await;
+            match result {
+                Ok(None) => {
+                    // Expected: printer not found
+                }
+                Ok(Some(_)) => {
+                    panic!("Unexpectedly found a printer with unlikely name");
+                }
+                Err(_) => {
+                    // Also acceptable in test environments
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_printer_summary() {
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let summary = monitor.printer_summary().await;
+            // Should return either a summary or an error, but not panic
+            match summary {
+                Ok(summary_map) => {
+                    println!("Got summary for {} printers", summary_map.len());
+                }
+                Err(e) => {
+                    println!("Expected error in test environment: {}", e);
+                }
+            }
+        }
+    }
 }
