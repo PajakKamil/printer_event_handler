@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2025-01-06
+
+### Added
+
+#### Graceful Shutdown Support
+- **CancellationToken support** - All monitoring functions now accept optional `CancellationToken` for graceful shutdown
+- **Responsive cancellation** - Uses `tokio::select!` for immediate cancellation response during sleep intervals
+- **Clean resource cleanup** - Monitoring tasks can be stopped gracefully without task abortion
+- **Re-exported CancellationToken** - `tokio_util::sync::CancellationToken` now exported from main crate for convenience
+
+#### Enhanced Monitor Architecture
+- **Cloneable PrinterMonitor** - `PrinterMonitor` now implements `Clone` trait for efficient sharing
+- **Arc-based backend** - Backend changed from `Box<dyn PrinterBackend>` to `Arc<dyn PrinterBackend>` for shared ownership
+- **Efficient multi-printer monitoring** - Multiple monitors can now share the same backend connection
+- **No duplicate connections** - Fixed issue where each monitored printer created a new backend instance
+
+### Fixed
+
+#### Code Quality Improvements
+- **Edition compatibility** - Fixed Rust edition from non-existent "2024" to "2021"
+- **Library logging** - Replaced `println!` with proper `log::info!()` macros in library code
+- **PartialEq completeness** - Added missing `is_default` field to printer equality comparison
+- **Mutex contention** - Fixed mutex contention by releasing locks before invoking callbacks
+
+#### Testing Infrastructure
+- **Comprehensive test coverage** - Added 52 tests covering all modules and platforms
+- **Platform-specific tests** - Tests for both Windows (`#[cfg(windows)]`) and Unix (`#[cfg(unix)]`)
+- **Cancellation token tests** - New tests for cancellation behavior and graceful shutdown
+- **Clone verification** - Tests ensuring `PrinterMonitor` is properly cloneable
+
+### Changed
+
+#### API Updates - BREAKING CHANGE
+- **Monitoring function signatures** - All monitoring functions now require `cancel_token: Option<CancellationToken>` parameter:
+  - `monitor_printer(printer_name, interval_ms, cancel_token, callback)`
+  - `monitor_printer_changes(printer_name, interval_ms, cancel_token, callback)`
+  - `monitor_property(printer_name, property, interval_ms, cancel_token, callback)`
+  - `monitor_multiple_printers(printer_names, interval_ms, cancel_token, callback)`
+- **Pass None for no cancellation** - Existing code can pass `None` to maintain previous behavior
+
+#### Behavioral Improvements
+- **Initial state handling** - Callbacks no longer invoked on initial state capture to avoid empty changes
+- **Lock-free callbacks** - Callbacks now execute outside of internal locks to prevent contention with slow user code
+
+### Dependencies
+- **tokio-util 0.7** - Added for `CancellationToken` support
+- **tokio sync feature** - Added "sync" feature to tokio dependency
+
+### Migration Guide
+
+**Before (v1.3.2 and earlier):**
+```rust
+// No cancellation support
+monitor.monitor_printer("Printer", 30000, |current, previous| {
+    // callback logic
+}).await?;
+```
+
+**After (v1.4.0+):**
+```rust
+use printer_event_handler::CancellationToken;
+
+// With cancellation support
+let cancel_token = CancellationToken::new();
+let token_clone = cancel_token.clone();
+
+let handle = tokio::spawn(async move {
+    monitor.monitor_printer("Printer", 30000, Some(token_clone), |current, previous| {
+        // callback logic
+    }).await
+});
+
+// Later: cancel monitoring gracefully
+cancel_token.cancel();
+handle.await??;
+
+// Or without cancellation (backward compatible)
+monitor.monitor_printer("Printer", 30000, None, |current, previous| {
+    // callback logic
+}).await?;
+```
+
+**Cloneable Monitor:**
+```rust
+// Efficient sharing across tasks
+let monitor = PrinterMonitor::new().await?;
+let monitor_clone = monitor.clone(); // Cheap Arc clone
+
+tokio::spawn(async move {
+    monitor_clone.list_printers().await
+});
+```
+
+### Technical Details
+- **Performance** - No performance degradation; cancellation checks are lightweight
+- **Memory efficiency** - Arc-based sharing reduces memory overhead for multi-printer monitoring
+- **Backward compatibility** - Passing `None` for cancel_token maintains existing behavior
+- **Cross-platform** - All improvements work identically on Windows and Linux
+
+### Benefits
+- **Production-ready** - Graceful shutdown enables proper service lifecycle management
+- **Resource efficient** - Shared backend connections reduce system resource usage
+- **Better testing** - Comprehensive test suite improves reliability and maintainability
+- **Modern async patterns** - Follows Tokio best practices for cancellation and shutdown
+
 ## [1.3.2] - 2025-08-19
 
 ### Changed

@@ -50,7 +50,7 @@ async fn main() -> Result<(), PrinterError> {
 
     // Monitor printer with detailed change reporting
     monitor
-        .monitor_printer(&target_printer_name, 1000, |current, previous| {
+        .monitor_printer(&target_printer_name, 1000, None, |current, previous| {
             let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
             if let Some(prev) = previous {
                 if prev != current {

@@ -43,7 +43,10 @@ impl PrinterBackend for WindowsBackend {
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
             let com_con = COMLibrary::new().map_err(PrinterError::from)?;
             let wmi_connection = wmi::WMIConnection::new(com_con).map_err(PrinterError::from)?;
-            let printers: Vec<Win32Printer> = wmi_connection.raw_query("SELECT Name, PrinterStatus, DetectedErrorState, WorkOffline, PrinterState, Default, ExtendedPrinterStatus, ExtendedDetectedErrorState, Status FROM Win32_Printer").map_err(PrinterError::from)?;
+            // Use SELECT * to avoid issues with reserved keyword 'Default'
+            let printers: Vec<Win32Printer> = wmi_connection
+                .raw_query("SELECT * FROM Win32_Printer")
+                .map_err(PrinterError::from)?;
             Ok(printers)
         })
         .await
@@ -203,8 +206,8 @@ async fn get_default_printer() -> Option<String> {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                if line.starts_with("system default destination: ") {
-                    return Some(line.replace("system default destination: ", ""));
+                if let Some(name) = line.strip_prefix("system default destination: ") {
+                    return Some(name.to_string());
                 }
                 if line.starts_with("no system default destination") {
                     return None;
@@ -269,5 +272,162 @@ pub async fn create_backend() -> Result<Box<dyn PrinterBackend>> {
     #[cfg(not(any(windows, unix)))]
     {
         Err(PrinterError::PlatformNotSupported)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_create_backend() {
+        let result = create_backend().await;
+
+        #[cfg(any(windows, unix))]
+        {
+            // On supported platforms, backend creation should succeed
+            assert!(result.is_ok());
+        }
+
+        #[cfg(not(any(windows, unix)))]
+        {
+            // On unsupported platforms, should return error
+            assert!(matches!(result, Err(PrinterError::PlatformNotSupported)));
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_windows_backend_creation() {
+        let result = WindowsBackend::new().await;
+        // May fail in test environments without WMI access, but should not panic
+        match result {
+            Ok(_) => println!("Windows backend created successfully"),
+            Err(e) => println!("Expected error in test environment: {}", e),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_linux_backend_creation() {
+        let result = LinuxBackend::new().await;
+        // Should succeed even without CUPS, as we have fallback detection
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_windows_backend_list_printers() {
+        let backend_result = WindowsBackend::new().await;
+        if let Ok(backend) = backend_result {
+            let printers = backend.list_printers().await;
+            // Either returns printers or an error, but shouldn't panic
+            match printers {
+                Ok(printer_list) => {
+                    println!("Found {} printers via Windows backend", printer_list.len());
+                    // Verify each printer has required fields
+                    for printer in printer_list {
+                        assert!(!printer.name().is_empty());
+                    }
+                }
+                Err(e) => {
+                    println!("Expected error in test environment: {}", e);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_linux_backend_list_printers() {
+        let backend = LinuxBackend::new().await;
+        assert!(backend.is_ok());
+
+        if let Ok(backend) = backend {
+            let printers = backend.list_printers().await;
+            // Should return result, even if empty
+            match printers {
+                Ok(printer_list) => {
+                    println!("Found {} printers via Linux backend", printer_list.len());
+                    // Verify each printer has required fields
+                    for printer in printer_list {
+                        assert!(!printer.name().is_empty());
+                    }
+                }
+                Err(e) => {
+                    println!("Error listing printers: {}", e);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_linux_backend_find_printer() {
+        let backend = LinuxBackend::new().await;
+        assert!(backend.is_ok());
+
+        if let Ok(backend) = backend {
+            // Try to find a non-existent printer
+            let result = backend.find_printer("NonExistentPrinter_Test_12345").await;
+            assert!(result.is_ok());
+            // Should return None for non-existent printer
+            if let Ok(printer_opt) = result {
+                if printer_opt.is_some() {
+                    println!("Warning: Found printer with unlikely name");
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_idle() {
+        let line = "printer HP_LaserJet is idle.  enabled since Mon 01 Jan 2024 12:00:00 PM UTC";
+        let printer = parse_lpstat_line(line);
+
+        assert!(printer.is_some());
+        if let Some(p) = printer {
+            assert_eq!(p.name(), "HP_LaserJet");
+            assert_eq!(p.status(), &crate::PrinterStatus::Idle);
+            assert_eq!(p.error_state(), &crate::ErrorState::NoError);
+            assert!(!p.is_offline());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_printing() {
+        let line =
+            "printer Canon_MX920 is printing.  enabled since Tue 02 Jan 2024 10:00:00 AM UTC";
+        let printer = parse_lpstat_line(line);
+
+        assert!(printer.is_some());
+        if let Some(p) = printer {
+            assert_eq!(p.name(), "Canon_MX920");
+            assert_eq!(p.status(), &crate::PrinterStatus::Printing);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_stopped() {
+        let line = "printer Epson_XP is stopped.  disabled since Wed 03 Jan 2024 08:00:00 AM UTC";
+        let printer = parse_lpstat_line(line);
+
+        assert!(printer.is_some());
+        if let Some(p) = printer {
+            assert_eq!(p.name(), "Epson_XP");
+            assert_eq!(p.status(), &crate::PrinterStatus::Offline);
+            assert!(p.is_offline());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_invalid() {
+        let line = "This is not a valid lpstat line";
+        let printer = parse_lpstat_line(line);
+        assert!(printer.is_none());
     }
 }

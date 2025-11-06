@@ -26,6 +26,10 @@ cargo run --bin async_patterns
 # Property-level change monitoring
 cargo run --bin property_monitoring -- "Printer Name"
 cargo run --bin property_monitoring  # Uses first available printer
+
+# Cancellation token examples
+cargo run --bin cancellation_token_example -- "Printer Name"
+cargo run --bin cancellation_token_example  # Uses first available printer
 ```
 
 ### From the main project directory:
@@ -36,6 +40,7 @@ cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer 
 cargo run --manifest-path examples/Cargo.toml --bin error_handling
 cargo run --manifest-path examples/Cargo.toml --bin async_patterns
 cargo run --manifest-path examples/Cargo.toml --bin property_monitoring -- "Printer Name"
+cargo run --manifest-path examples/Cargo.toml --bin cancellation_token_example -- "Printer Name"
 ```
 
 ## Example Files
@@ -108,6 +113,20 @@ Property-level change monitoring and detection with type-safe property selection
 - Type-safe property selection (e.g., `MonitorableProperty::IsOffline`)
 - Property-specific callbacks and filtering
 
+### [`cancellation_token_example.rs`](cancellation_token_example.rs)
+Demonstrates using cancellation tokens to gracefully stop monitoring tasks:
+- Basic cancellation after timeout
+- Multiple monitors with individual cancellation
+- Coordinated shutdown of multiple monitors
+- Conditional cancellation based on printer state
+
+**Features shown:**
+- `CancellationToken` usage with all monitor methods
+- Graceful shutdown patterns
+- Multiple concurrent monitors with shared or individual tokens
+- Time-based and condition-based cancellation
+- Clean task cleanup and error handling
+
 ## Key WMI Properties Demonstrated
 
 All examples showcase the complete set of WMI properties available:
@@ -134,8 +153,9 @@ All examples showcase the complete set of WMI properties available:
 1. **Start with `basic_listing.rs`** to understand available WMI properties
 2. **Use `monitor_changes.rs`** to see real-time status updates
 3. **Try `property_monitoring.rs`** for detailed property-level change tracking
-4. **Study `error_handling.rs`** for production-ready error handling
-5. **Explore `async_patterns.rs`** for advanced concurrent usage
+4. **Learn `cancellation_token_example.rs`** for graceful shutdown patterns
+5. **Study `error_handling.rs`** for production-ready error handling
+6. **Explore `async_patterns.rs`** for advanced concurrent usage
 
 ## Platform Notes
 
