@@ -5,7 +5,7 @@ use serde::Deserialize;
 ///
 /// This is the current WMI property for printer status information.
 /// Values 1-7 according to Microsoft documentation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrinterStatus {
     Other,           // 1
     Unknown,         // 2
@@ -22,7 +22,7 @@ pub enum PrinterStatus {
 /// This enum represents the actual WMI PrinterState values which correspond to
 /// the .NET System.Printing.PrintQueueStatus enumeration flags.
 /// See: <https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus>
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrinterState {
     None,                     // 0 - No status
     Paused,                   // 1 - The print queue is paused
@@ -297,7 +297,7 @@ impl std::fmt::Display for PrinterState {
 }
 
 /// Represents a printer's error state
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorState {
     NoError,
     Other,
@@ -936,22 +936,22 @@ impl Printer {
 
         if self.status != other.status {
             changes.changes.push(PropertyChange::Status {
-                old: self.status.clone(),
-                new: other.status.clone(),
+                old: self.status,
+                new: other.status,
             });
         }
 
         if self.state != other.state {
             changes.changes.push(PropertyChange::State {
-                old: self.state.clone(),
-                new: other.state.clone(),
+                old: self.state,
+                new: other.state,
             });
         }
 
         if self.error_state != other.error_state {
             changes.changes.push(PropertyChange::ErrorState {
-                old: self.error_state.clone(),
-                new: other.error_state.clone(),
+                old: self.error_state,
+                new: other.error_state,
             });
         }
 

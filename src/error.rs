@@ -13,6 +13,8 @@ pub enum PrinterError {
     PlatformNotSupported,
     /// General I/O error
     IoError(std::io::Error),
+    /// Invalid parameter provided
+    InvalidParameter(String),
     /// Other errors
     Other(String),
 }
@@ -28,6 +30,7 @@ impl fmt::Display for PrinterError {
                 write!(f, "This platform is not supported")
             }
             PrinterError::IoError(err) => write!(f, "I/O error: {}", err),
+            PrinterError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             PrinterError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -38,6 +41,7 @@ impl std::error::Error for PrinterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             PrinterError::IoError(err) => Some(err),
+            PrinterError::InvalidParameter(_) => None,
             _ => None,
         }
     }

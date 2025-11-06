@@ -195,8 +195,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match monitor_printer_cli(printer_name).await {
             Ok(()) => {}
             Err(PrinterError::PlatformNotSupported) => {
-                println!("This application only supports Windows systems.");
-                println!("Printer monitoring requires Windows Management Instrumentation (WMI).");
+                println!("Error: This platform is not supported.");
+                println!("Supported platforms:");
+                println!("  - Windows (via WMI - Windows Management Instrumentation)");
+                println!("  - Linux (via CUPS - Common Unix Printing System)");
+                println!("\nPlease ensure the required printing system is installed and accessible.");
             }
             Err(e) => {
                 error!("Failed to monitor printer: {}", e);
@@ -217,10 +220,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match list_printers_cli().await {
             Ok(()) => {}
             Err(PrinterError::PlatformNotSupported) => {
-                println!("This application only supports Windows systems.");
-                println!(
-                    "Printer status checking requires Windows Management Instrumentation (WMI)."
-                );
+                println!("Error: This platform is not supported.");
+                println!("Supported platforms:");
+                println!("  - Windows (via WMI - Windows Management Instrumentation)");
+                println!("  - Linux (via CUPS - Common Unix Printing System)");
+                println!("\nPlease ensure the required printing system is installed and accessible.");
             }
             Err(e) => {
                 error!("Failed to list printers: {}", e);

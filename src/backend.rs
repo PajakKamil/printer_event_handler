@@ -221,38 +221,26 @@ async fn get_default_printer() -> Option<String> {
 
 #[cfg(unix)]
 async fn detect_printers_alternative() -> Result<Vec<Printer>> {
-    use crate::{ErrorState, PrinterStatus};
-    use log::info;
-    use tokio::fs;
+    use log::{info, warn};
 
-    let mut printers = Vec::new();
+    // NOTE: This is a fallback method for systems without CUPS/lpstat.
+    // Currently limited to basic detection only.
+    //
+    // Limitations:
+    // - Cannot detect USB printers reliably without parsing USB device info
+    // - Cannot determine printer status without CUPS
+    // - Limited to legacy parallel port detection
+    //
+    // For proper printer support on Linux, install CUPS:
+    //   Ubuntu/Debian: sudo apt install cups
+    //   RHEL/Fedora: sudo yum install cups
 
-    // Check for USB printers in /sys/class/usb
-    info!("Checking for USB printers in /sys/class/usb...");
-    if let Ok(_entries) = fs::read_dir("/sys/class/usb").await {
-        // This is a basic implementation - in practice you'd need to parse USB device info
-        // to identify printers by their device class
-        info!("Found USB entries, but printer detection requires more complex parsing");
-    }
+    warn!("CUPS/lpstat not available, using limited fallback detection");
+    info!("For full Linux printer support, please install CUPS (Common Unix Printing System)");
 
-    // Check for parallel port printers
-    if let Ok(_) = fs::metadata("/dev/lp0").await {
-        info!("Found parallel port printer device");
-        printers.push(Printer::new(
-            "Parallel Port Printer".to_string(),
-            PrinterStatus::StatusUnknown,
-            ErrorState::UnknownError,
-            false,
-            false,
-        ));
-    }
-
-    // For WSL or systems without direct hardware access, we might not find any printers
-    if printers.is_empty() {
-        info!("No printers detected via alternative methods");
-    }
-
-    Ok(printers)
+    // Currently we return empty list as the alternative detection methods
+    // are unreliable without proper USB device parsing
+    Ok(Vec::new())
 }
 
 /// Create the appropriate backend for the current platform
