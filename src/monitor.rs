@@ -661,7 +661,8 @@ impl PrinterMonitor {
                             // Acquire lock to check previous state and compute changes
                             let (changes_to_report, is_initial) = {
                                 let mut states = previous_states_clone.lock().await;
-                                let previous = states.get(&printer_name_clone).and_then(|p| p.as_ref());
+                                let previous =
+                                    states.get(&printer_name_clone).and_then(|p| p.as_ref());
 
                                 let result = if let Some(prev) = previous {
                                     let changes = prev.compare_with(&current_printer);
@@ -699,17 +700,19 @@ impl PrinterMonitor {
                             // Acquire lock to check if printer disappeared
                             let changes_to_report = {
                                 let mut states = previous_states_clone.lock().await;
-                                let changes = if let Some(Some(prev)) = states.get(&printer_name_clone) {
-                                    // Printer disappeared - create a change showing it went offline
-                                    let mut changes = PrinterChanges::new(printer_name_clone.clone());
-                                    changes.changes.push(crate::PropertyChange::IsOffline {
-                                        old: prev.is_offline(),
-                                        new: true,
-                                    });
-                                    Some(changes)
-                                } else {
-                                    None
-                                };
+                                let changes =
+                                    if let Some(Some(prev)) = states.get(&printer_name_clone) {
+                                        // Printer disappeared - create a change showing it went offline
+                                        let mut changes =
+                                            PrinterChanges::new(printer_name_clone.clone());
+                                        changes.changes.push(crate::PropertyChange::IsOffline {
+                                            old: prev.is_offline(),
+                                            new: true,
+                                        });
+                                        Some(changes)
+                                    } else {
+                                        None
+                                    };
 
                                 states.insert(printer_name_clone.clone(), None);
                                 changes
@@ -946,9 +949,7 @@ mod tests {
     async fn test_find_nonexistent_printer() {
         let monitor = PrinterMonitor::new().await;
         if let Ok(monitor) = monitor {
-            let result = monitor
-                .find_printer("NonExistentPrinter_12345_ABCDE")
-                .await;
+            let result = monitor.find_printer("NonExistentPrinter_12345_ABCDE").await;
             match result {
                 Ok(None) => {
                     // Expected: printer not found
@@ -1014,10 +1015,7 @@ mod tests {
             let result = timeout(Duration::from_secs(2), handle).await;
             assert!(result.is_ok(), "Task should complete after cancellation");
             if let Ok(Ok(task_result)) = result {
-                assert!(
-                    task_result.is_ok(),
-                    "Cancelled monitoring should return Ok"
-                );
+                assert!(task_result.is_ok(), "Cancelled monitoring should return Ok");
             }
         }
     }
@@ -1068,9 +1066,14 @@ mod tests {
             // Spawn monitoring task
             let handle = tokio::spawn(async move {
                 monitor
-                    .monitor_multiple_printers(printer_names, 1000, Some(cancel_clone), |_changes| {
-                        // Should not be called
-                    })
+                    .monitor_multiple_printers(
+                        printer_names,
+                        1000,
+                        Some(cancel_clone),
+                        |_changes| {
+                            // Should not be called
+                        },
+                    )
                     .await
             });
 

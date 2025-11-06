@@ -1396,16 +1396,10 @@ mod tests {
         assert_eq!(PrinterState::from_u32(16384), PrinterState::Processing);
 
         // Test priority: Error states take precedence
-        assert_eq!(
-            PrinterState::from_u32(2 | 1024),
-            PrinterState::Error
-        ); // Error + Printing -> Error
+        assert_eq!(PrinterState::from_u32(2 | 1024), PrinterState::Error); // Error + Printing -> Error
 
         // Test priority: DoorOpen is highest priority error
-        assert_eq!(
-            PrinterState::from_u32(4194304 | 2),
-            PrinterState::DoorOpen
-        );
+        assert_eq!(PrinterState::from_u32(4194304 | 2), PrinterState::DoorOpen);
     }
 
     #[cfg(windows)]

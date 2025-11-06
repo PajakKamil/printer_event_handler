@@ -8,12 +8,12 @@ A cross-platform Rust library for monitoring printer status and events on Window
 
 ## Features
 
-- 🖨️ **Cross-platform support** - Works on Windows (WMI) and Linux (CUPS)
-- 📊 **Real-time monitoring** - Monitor printer status changes with customizable intervals (millisecond precision)
-- 🔍 **Printer discovery** - List and find printers on your system
-- ⚡ **Async/await support** - Built on Tokio for efficient asynchronous operations
-- 🛡️ **Type-safe** - Strongly typed printer status and error states
-- 📦 **Library + CLI** - Use as a library in your projects or as a standalone CLI tool
+- **Cross-platform support** - Works on Windows (WMI) and Linux (CUPS)
+- **Real-time monitoring** - Monitor printer status changes with customizable intervals (millisecond precision)
+- **Printer discovery** - List and find printers on your system
+- **Async/await support** - Built on Tokio for efficient asynchronous operations
+- **Type-safe** - Strongly typed printer status and error states
+- **Library + CLI** - Use as a library in your projects or as a standalone CLI tool
 
 ## Quick Start
 
@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.3.2"
+printer_event_handler = "1.4.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 

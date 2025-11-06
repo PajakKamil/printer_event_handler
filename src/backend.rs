@@ -369,9 +369,7 @@ mod tests {
 
         if let Ok(backend) = backend {
             // Try to find a non-existent printer
-            let result = backend
-                .find_printer("NonExistentPrinter_Test_12345")
-                .await;
+            let result = backend.find_printer("NonExistentPrinter_Test_12345").await;
             assert!(result.is_ok());
             // Should return None for non-existent printer
             if let Ok(printer_opt) = result {
@@ -400,7 +398,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_parse_lpstat_line_printing() {
-        let line = "printer Canon_MX920 is printing.  enabled since Tue 02 Jan 2024 10:00:00 AM UTC";
+        let line =
+            "printer Canon_MX920 is printing.  enabled since Tue 02 Jan 2024 10:00:00 AM UTC";
         let printer = parse_lpstat_line(line);
 
         assert!(printer.is_some());

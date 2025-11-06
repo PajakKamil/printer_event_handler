@@ -87,7 +87,7 @@ async fn demonstrate_detailed_monitoring(
         tokio::spawn(async move {
             let new_monitor = PrinterMonitor::new().await?;
             new_monitor
-                .monitor_printer_changes(&printer_name, 1000, |changes| {
+                .monitor_printer_changes(&printer_name, 1000, None, |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
 
                     if changes.has_changes() {
@@ -150,6 +150,7 @@ async fn demonstrate_specific_property_monitoring(
                     &printer_name,
                     MonitorableProperty::IsOffline,
                     1000,
+                    None,
                     |change| {
                         println!("OFFLINE STATUS CHANGE: {}", change.description());
                     },
@@ -165,9 +166,15 @@ async fn demonstrate_specific_property_monitoring(
         tokio::spawn(async move {
             let new_monitor = PrinterMonitor::new().await?;
             new_monitor
-                .monitor_property(&printer_name, MonitorableProperty::Status, 1000, |change| {
-                    println!("STATUS CHANGE: {}", change.description());
-                })
+                .monitor_property(
+                    &printer_name,
+                    MonitorableProperty::Status,
+                    1000,
+                    None,
+                    |change| {
+                        println!("STATUS CHANGE: {}", change.description());
+                    },
+                )
                 .await
         })
     };
@@ -203,7 +210,7 @@ async fn demonstrate_multiple_printer_monitoring(
                 tokio::spawn(async move {
                     let new_monitor = PrinterMonitor::new().await?;
                     new_monitor
-                        .monitor_multiple_printers(printer_names, 1000, |changes| {
+                        .monitor_multiple_printers(printer_names, 1000, None, |changes| {
                             if changes.has_changes() {
                                 println!(
                                     "Multi-printer monitor - {}: {}",
@@ -243,7 +250,7 @@ async fn demonstrate_multiple_printer_monitoring(
         tokio::spawn(async move {
             let new_monitor = PrinterMonitor::new().await?;
             new_monitor
-                .monitor_multiple_printers(printer_names, 1000, |changes| {
+                .monitor_multiple_printers(printer_names, 1000, None, |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
                     if changes.has_changes() {
                         println!(
