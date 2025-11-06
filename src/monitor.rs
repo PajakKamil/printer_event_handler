@@ -363,6 +363,12 @@ impl PrinterMonitor {
     /// # Returns
     /// * `Result<()>` - Never returns Ok normally (runs indefinitely), only Err on failure
     ///
+    /// # Behavior
+    /// - The callback is **NOT** called on the initial state capture
+    /// - Only actual property changes trigger the callback
+    /// - Changes are always non-empty when the callback is invoked
+    /// - The initial state is captured silently for comparison with future states
+    ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
@@ -370,13 +376,13 @@ impl PrinterMonitor {
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
-    ///     
+    ///
     ///     monitor.monitor_printer_changes("HP LaserJet", 30000, |changes| {
-    ///         if changes.has_changes() {
-    ///             println!("Detected {} changes:", changes.change_count());
-    ///             for change in &changes.changes {
-    ///                 println!("  - {}", change.description());
-    ///             }
+    ///         // Only called when properties actually change
+    ///         // changes.has_changes() is always true here
+    ///         println!("Detected {} changes:", changes.change_count());
+    ///         for change in &changes.changes {
+    ///             println!("  - {}", change.description());
     ///         }
     ///     }).await.unwrap();
     /// }
@@ -411,9 +417,7 @@ impl PrinterMonitor {
                             callback(&changes);
                         }
                     } else {
-                        // Initial state - report as "initial" (no previous state)
-                        let changes = PrinterChanges::new(current_printer.name().to_string());
-                        callback(&changes);
+                        // Initial state - just capture, don't call callback
                         info!("Printer '{}' - Initial state captured", printer_name);
                     }
                     previous_printer = Some(current_printer);
@@ -498,7 +502,20 @@ impl PrinterMonitor {
     /// # Arguments
     /// * `printer_names` - List of printer names to monitor
     /// * `interval_ms` - Polling interval in milliseconds
-    /// * `callback` - Function called when any printer changes
+    /// * `callback` - Function called when any printer changes (NOT called on initial state)
+    ///
+    /// # Behavior
+    /// - The callback is **NOT** called on the initial state capture for each printer
+    /// - Only actual property changes trigger the callback
+    /// - Each printer is monitored in a separate task for true concurrent monitoring
+    /// - Callbacks are called outside of internal locks to prevent contention with slow callbacks
+    ///
+    /// # Implementation Note
+    /// Due to Rust's async lifetime constraints, this method creates a separate
+    /// `PrinterMonitor` instance for each printer. This is acceptable for most use cases
+    /// but may result in multiple backend connections (e.g., multiple WMI connections on Windows).
+    /// For monitoring a large number of printers, consider calling `monitor_printer_changes`
+    /// individually with your own task management.
     ///
     /// # Example
     /// ```rust,no_run
@@ -510,6 +527,7 @@ impl PrinterMonitor {
     ///     let printers = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
     ///
     ///     monitor.monitor_multiple_printers(printers, 30000, |changes| {
+    ///         // Only called when properties actually change, not on initial state
     ///         println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
     ///     }).await.unwrap();
     /// }
@@ -556,42 +574,68 @@ impl PrinterMonitor {
                 loop {
                     match local_monitor.find_printer(&printer_name_clone).await {
                         Ok(Some(current_printer)) => {
-                            let mut states = previous_states_clone.lock().await;
-                            let previous = states.get(&printer_name_clone).and_then(|p| p.as_ref());
+                            // Acquire lock to check previous state and compute changes
+                            let (changes_to_report, is_initial) = {
+                                let mut states = previous_states_clone.lock().await;
+                                let previous = states.get(&printer_name_clone).and_then(|p| p.as_ref());
 
-                            if let Some(prev) = previous {
-                                let changes = prev.compare_with(&current_printer);
-                                if changes.has_changes() {
-                                    info!(
-                                        "Printer '{}' - {} properties changed",
-                                        printer_name_clone,
-                                        changes.change_count()
-                                    );
-                                    callback_clone(&changes);
-                                }
-                            } else {
-                                // Initial state - report as "initial" (no previous state)
-                                let changes =
-                                    PrinterChanges::new(current_printer.name().to_string());
+                                let result = if let Some(prev) = previous {
+                                    let changes = prev.compare_with(&current_printer);
+                                    if changes.has_changes() {
+                                        (Some(changes), false)
+                                    } else {
+                                        (None, false)
+                                    }
+                                } else {
+                                    // Initial state - no callback on first check
+                                    (None, true)
+                                };
+
+                                // Update state before releasing lock
+                                states.insert(printer_name_clone.clone(), Some(current_printer));
+                                result
+                            };
+                            // Lock is released here
+
+                            // Call callback outside of lock to avoid contention
+                            if let Some(changes) = changes_to_report {
+                                info!(
+                                    "Printer '{}' - {} properties changed",
+                                    printer_name_clone,
+                                    changes.change_count()
+                                );
                                 callback_clone(&changes);
+                            } else if is_initial {
                                 info!("Printer '{}' - Initial state captured", printer_name_clone);
                             }
-
-                            states.insert(printer_name_clone.clone(), Some(current_printer));
                         }
                         Ok(None) => {
                             warn!("Printer '{}' not found", printer_name_clone);
-                            let mut states = previous_states_clone.lock().await;
-                            if let Some(Some(prev)) = states.get(&printer_name_clone) {
-                                // Printer disappeared - create a change showing it went offline
-                                let mut changes = PrinterChanges::new(printer_name_clone.clone());
-                                changes.changes.push(crate::PropertyChange::IsOffline {
-                                    old: prev.is_offline(),
-                                    new: true,
-                                });
+
+                            // Acquire lock to check if printer disappeared
+                            let changes_to_report = {
+                                let mut states = previous_states_clone.lock().await;
+                                let changes = if let Some(Some(prev)) = states.get(&printer_name_clone) {
+                                    // Printer disappeared - create a change showing it went offline
+                                    let mut changes = PrinterChanges::new(printer_name_clone.clone());
+                                    changes.changes.push(crate::PropertyChange::IsOffline {
+                                        old: prev.is_offline(),
+                                        new: true,
+                                    });
+                                    Some(changes)
+                                } else {
+                                    None
+                                };
+
+                                states.insert(printer_name_clone.clone(), None);
+                                changes
+                            };
+                            // Lock is released here
+
+                            // Call callback outside of lock
+                            if let Some(changes) = changes_to_report {
                                 callback_clone(&changes);
                             }
-                            states.insert(printer_name_clone.clone(), None);
                         }
                         Err(e) => {
                             error!(
