@@ -1,10 +1,53 @@
 use crate::backend::{create_backend, PrinterBackend};
-use crate::{Printer, PrinterChanges, Result};
+use crate::{Printer, PrinterChanges, PrinterError, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
+
+/// Minimum allowed monitoring interval in milliseconds to prevent busy loops
+const MIN_INTERVAL_MS: u64 = 10;
+
+/// Maximum consecutive failures before giving up on monitoring
+const MAX_CONSECUTIVE_FAILURES: u32 = 10;
+
+/// Validates the monitoring interval parameter
+///
+/// # Arguments
+/// * `interval_ms` - The interval to validate
+///
+/// # Returns
+/// * `Result<()>` - Ok if valid, Err with InvalidParameter if not
+fn validate_interval(interval_ms: u64) -> Result<()> {
+    if interval_ms == 0 {
+        return Err(PrinterError::InvalidParameter(
+            "Monitoring interval must be greater than 0".to_string(),
+        ));
+    }
+    if interval_ms < MIN_INTERVAL_MS {
+        return Err(PrinterError::InvalidParameter(format!(
+            "Monitoring interval must be at least {}ms to prevent excessive CPU usage",
+            MIN_INTERVAL_MS
+        )));
+    }
+    Ok(())
+}
+
+/// Implements exponential backoff for error recovery
+///
+/// # Arguments
+/// * `attempt` - The current retry attempt number (0-based)
+///
+/// # Returns
+/// * `Duration` - The duration to sleep before retrying
+fn calculate_backoff(attempt: u32) -> Duration {
+    // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms, max 5s
+    let base_ms = 100u64;
+    let max_ms = 5000u64;
+    let backoff_ms = base_ms.saturating_mul(2u64.saturating_pow(attempt)).min(max_ms);
+    Duration::from_millis(backoff_ms)
+}
 
 /// Enum representing all available printer properties that can be monitored.
 ///
@@ -209,23 +252,29 @@ impl PrinterMonitor {
     ///
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
-    /// * `interval_ms` - Polling interval in milliseconds
+    /// * `interval_ms` - Polling interval in milliseconds (minimum 10ms)
+    /// * `cancel_token` - Optional token for graceful cancellation
     /// * `callback` - Function called when printer status changes, receives (current, previous)
     ///
     /// # Returns
-    /// * `Result<()>` - Never returns Ok normally (runs indefinitely), only Err on failure
+    /// * `Result<()>` - Returns Ok when cancelled or after max failures, Err on validation failure
     ///
     /// # Errors
-    /// * `PrinterError::PrinterNotFound` - If the specified printer is not found initially
-    /// * `PrinterError::WmiError` - If WMI queries fail on Windows
-    /// * `PrinterError::CupsError` - If CUPS queries fail on Linux
-    /// * `PrinterError::IoError` - If there are system I/O issues
+    /// * `PrinterError::InvalidParameter` - If interval_ms is 0 or less than minimum
+    /// * `PrinterError::PrinterNotFound` - If the printer is not found after max retries
     ///
     /// # Behavior
-    /// - If the printer disappears during monitoring, the callback is called with a synthetic
-    ///   "unknown" status to indicate the printer is no longer available
+    /// - Validates interval_ms before starting
+    /// - Uses exponential backoff for transient errors (network issues, temporary WMI failures)
+    /// - Stops after MAX_CONSECUTIVE_FAILURES consecutive errors
+    /// - If the printer disappears, retries with backoff before giving up
     /// - The first check always triggers the callback to provide the initial status
     /// - Subsequent calls only trigger the callback if the status actually changes
+    ///
+    /// # Performance Warning
+    /// The callback function is called synchronously and will block the monitoring loop.
+    /// Keep callbacks fast to avoid delaying subsequent checks. For long-running operations,
+    /// spawn a separate task from within the callback.
     ///
     /// # Example
     /// ```rust,no_run
@@ -260,9 +309,13 @@ impl PrinterMonitor {
     where
         F: FnMut(&Printer, Option<&Printer>) + Send,
     {
+        // Validate interval before starting
+        validate_interval(interval_ms)?;
+
         info!("Starting printer monitoring service for: {}", printer_name);
 
         let mut previous_printer: Option<Printer> = None;
+        let mut consecutive_failures: u32 = 0;
 
         loop {
             // Check for cancellation
@@ -275,6 +328,9 @@ impl PrinterMonitor {
 
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
+                    // Reset failure counter on success
+                    consecutive_failures = 0;
+
                     info!("Checking printer: {}", current_printer.name());
                     let has_changed = previous_printer
                         .as_ref()
@@ -295,9 +351,22 @@ impl PrinterMonitor {
                     }
                 }
                 Ok(None) => {
-                    warn!("Printer '{}' not found", printer_name);
+                    consecutive_failures += 1;
+                    warn!(
+                        "Printer '{}' not found (attempt {}/{})",
+                        printer_name, consecutive_failures, MAX_CONSECUTIVE_FAILURES
+                    );
+
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        error!(
+                            "Printer '{}' not found after {} attempts, stopping monitoring",
+                            printer_name, MAX_CONSECUTIVE_FAILURES
+                        );
+                        return Err(PrinterError::PrinterNotFound(printer_name.to_string()));
+                    }
+
                     if previous_printer.is_some() {
-                        // Printer was previously found but now missing
+                        // Printer was previously found but now missing - notify callback
                         callback(
                             &Printer::new(
                                 printer_name.to_string(),
@@ -310,10 +379,38 @@ impl PrinterMonitor {
                         );
                         previous_printer = None;
                     }
+
+                    // Apply exponential backoff before retry
+                    let backoff = calculate_backoff(consecutive_failures - 1);
+                    info!(
+                        "Applying backoff: waiting {:?} before retry",
+                        backoff
+                    );
+                    sleep(backoff).await;
                 }
                 Err(e) => {
-                    error!("Failed to check printer status: {}", e);
-                    return Err(e);
+                    consecutive_failures += 1;
+                    error!(
+                        "Failed to check printer '{}' status (attempt {}/{}): {}",
+                        printer_name, consecutive_failures, MAX_CONSECUTIVE_FAILURES, e
+                    );
+
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        error!(
+                            "Too many consecutive failures for '{}', stopping monitoring",
+                            printer_name
+                        );
+                        return Err(e);
+                    }
+
+                    // Apply exponential backoff for transient errors
+                    let backoff = calculate_backoff(consecutive_failures - 1);
+                    warn!(
+                        "Transient error detected, retrying after {:?}",
+                        backoff
+                    );
+                    sleep(backoff).await;
+                    continue; // Skip the normal sleep interval
                 }
             }
 
@@ -387,19 +484,28 @@ impl PrinterMonitor {
     ///
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
-    /// * `interval_ms` - Polling interval in milliseconds
+    /// * `interval_ms` - Polling interval in milliseconds (minimum 10ms)
     /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when properties change, receives PrinterChanges
     ///
     /// # Returns
-    /// * `Result<()>` - Returns Ok when cancelled, or Err on failure
+    /// * `Result<()>` - Returns Ok when cancelled or after max failures, Err on validation failure
+    ///
+    /// # Errors
+    /// * `PrinterError::InvalidParameter` - If interval_ms is 0 or less than minimum
+    /// * `PrinterError::PrinterNotFound` - If the printer is not found after max retries
     ///
     /// # Behavior
+    /// - Validates interval_ms before starting
+    /// - Uses exponential backoff for transient errors
     /// - The callback is **NOT** called on the initial state capture
     /// - Only actual property changes trigger the callback
     /// - Changes are always non-empty when the callback is invoked
     /// - The initial state is captured silently for comparison with future states
     /// - Monitoring stops gracefully when the cancellation token is cancelled
+    ///
+    /// # Performance Warning
+    /// Keep callbacks fast to avoid blocking the monitoring loop.
     ///
     /// # Example
     /// ```rust,no_run
@@ -437,12 +543,16 @@ impl PrinterMonitor {
     where
         F: FnMut(&PrinterChanges) + Send,
     {
+        // Validate interval before starting
+        validate_interval(interval_ms)?;
+
         info!(
             "Starting detailed printer change monitoring for: {}",
             printer_name
         );
 
         let mut previous_printer: Option<Printer> = None;
+        let mut consecutive_failures: u32 = 0;
 
         loop {
             // Check for cancellation
@@ -455,6 +565,9 @@ impl PrinterMonitor {
 
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
+                    // Reset failure counter on success
+                    consecutive_failures = 0;
+
                     if let Some(ref prev) = previous_printer {
                         let changes = prev.compare_with(&current_printer);
                         if changes.has_changes() {
@@ -472,7 +585,20 @@ impl PrinterMonitor {
                     previous_printer = Some(current_printer);
                 }
                 Ok(None) => {
-                    warn!("Printer '{}' not found", printer_name);
+                    consecutive_failures += 1;
+                    warn!(
+                        "Printer '{}' not found (attempt {}/{})",
+                        printer_name, consecutive_failures, MAX_CONSECUTIVE_FAILURES
+                    );
+
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        error!(
+                            "Printer '{}' not found after {} attempts, stopping monitoring",
+                            printer_name, MAX_CONSECUTIVE_FAILURES
+                        );
+                        return Err(PrinterError::PrinterNotFound(printer_name.to_string()));
+                    }
+
                     if let Some(prev) = previous_printer.take() {
                         // Printer disappeared - create a change showing it went offline
                         let mut changes = PrinterChanges::new(printer_name.to_string());
@@ -482,10 +608,32 @@ impl PrinterMonitor {
                         });
                         callback(&changes);
                     }
+
+                    // Apply exponential backoff before retry
+                    let backoff = calculate_backoff(consecutive_failures - 1);
+                    info!("Applying backoff: waiting {:?} before retry", backoff);
+                    sleep(backoff).await;
                 }
                 Err(e) => {
-                    error!("Failed to check printer status: {}", e);
-                    return Err(e);
+                    consecutive_failures += 1;
+                    error!(
+                        "Failed to check printer '{}' status (attempt {}/{}): {}",
+                        printer_name, consecutive_failures, MAX_CONSECUTIVE_FAILURES, e
+                    );
+
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        error!(
+                            "Too many consecutive failures for '{}', stopping monitoring",
+                            printer_name
+                        );
+                        return Err(e);
+                    }
+
+                    // Apply exponential backoff for transient errors
+                    let backoff = calculate_backoff(consecutive_failures - 1);
+                    warn!("Transient error detected, retrying after {:?}", backoff);
+                    sleep(backoff).await;
+                    continue; // Skip the normal sleep interval
                 }
             }
 
@@ -512,9 +660,19 @@ impl PrinterMonitor {
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
     /// * `property` - The specific property to watch using MonitorableProperty enum
-    /// * `interval_ms` - Polling interval in milliseconds
+    /// * `interval_ms` - Polling interval in milliseconds (minimum 10ms)
     /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when the property changes
+    ///
+    /// # Returns
+    /// * `Result<()>` - Returns Ok when cancelled or after max failures, Err on validation failure
+    ///
+    /// # Errors
+    /// * `PrinterError::InvalidParameter` - If interval_ms is 0 or less than minimum
+    /// * `PrinterError::PrinterNotFound` - If the printer is not found after max retries
+    ///
+    /// # Performance Warning
+    /// Keep callbacks fast to avoid blocking the monitoring loop.
     ///
     /// # Example
     /// ```rust,no_run
@@ -571,20 +729,32 @@ impl PrinterMonitor {
     ///
     /// # Arguments
     /// * `printer_names` - List of printer names to monitor
-    /// * `interval_ms` - Polling interval in milliseconds
+    /// * `interval_ms` - Polling interval in milliseconds (minimum 10ms)
     /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when any printer changes (NOT called on initial state)
     ///
     /// # Returns
-    /// * `Result<()>` - Returns Ok when cancelled or all tasks complete, or Err on failure
+    /// * `Result<()>` - Returns Ok when cancelled or all tasks complete, Err on validation/failure
+    ///
+    /// # Errors
+    /// * `PrinterError::InvalidParameter` - If interval_ms is 0 or less than minimum
+    /// * `PrinterError::PrinterNotFound` - If printers are not found after max retries
     ///
     /// # Behavior
+    /// - Validates interval_ms before starting
+    /// - Uses exponential backoff for transient errors
     /// - The callback is **NOT** called on the initial state capture for each printer
     /// - Only actual property changes trigger the callback
     /// - Each printer is monitored in a separate task for true concurrent monitoring
-    /// - Callbacks are called outside of internal locks to prevent contention with slow callbacks
+    /// - Callbacks are called outside of internal locks to prevent contention
     /// - The monitor is cloned (cheaply via Arc) for each task, sharing the same backend connection
     /// - Monitoring stops gracefully when the cancellation token is cancelled
+    ///
+    /// # Performance Considerations
+    /// - The callback is shared (via Arc) and may be called concurrently from multiple tasks
+    /// - Keep callbacks fast (<1ms) to avoid blocking monitoring threads
+    /// - For long-running operations, spawn separate tasks from within the callback
+    /// - Internal state uses a Mutex - callbacks execute outside the lock to prevent contention
     ///
     /// # Example
     /// ```rust,no_run
@@ -621,6 +791,9 @@ impl PrinterMonitor {
     {
         use std::sync::Arc;
         use tokio::task::JoinHandle;
+
+        // Validate interval before starting
+        validate_interval(interval_ms)?;
 
         info!(
             "Starting concurrent monitoring of {} printers",
