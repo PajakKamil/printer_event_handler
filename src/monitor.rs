@@ -2,7 +2,9 @@ use crate::backend::{create_backend, PrinterBackend};
 use crate::{Printer, PrinterChanges, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 
 /// Enum representing all available printer properties that can be monitored.
 ///
@@ -96,8 +98,12 @@ impl MonitorableProperty {
 }
 
 /// Printer monitoring and querying functionality
+///
+/// `PrinterMonitor` is cheaply cloneable (uses `Arc` internally) and can be
+/// shared across tasks without creating multiple backend connections.
+#[derive(Clone)]
 pub struct PrinterMonitor {
-    backend: Box<dyn PrinterBackend>,
+    backend: Arc<dyn PrinterBackend>,
 }
 
 impl PrinterMonitor {
@@ -126,7 +132,9 @@ impl PrinterMonitor {
     pub async fn new() -> Result<Self> {
         info!("Initializing printer monitor...");
         let backend = create_backend().await?;
-        Ok(Self { backend })
+        Ok(Self {
+            backend: Arc::from(backend),
+        })
     }
 
     /// Retrieves a list of all printers available on the system.
@@ -222,12 +230,14 @@ impl PrinterMonitor {
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
+    /// use tokio_util::sync::CancellationToken;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
-    ///     
-    ///     monitor.monitor_printer("HP LaserJet", 30000, |current, previous| {
+    ///     let cancel_token = CancellationToken::new();
+    ///
+    ///     monitor.monitor_printer("HP LaserJet", 30000, Some(cancel_token.clone()), |current, previous| {
     ///         if let Some(prev) = previous {
     ///             if prev != current {
     ///                 println!("Status changed: {} -> {}",
@@ -244,6 +254,7 @@ impl PrinterMonitor {
         &self,
         printer_name: &str,
         interval_ms: u64,
+        cancel_token: Option<CancellationToken>,
         mut callback: F,
     ) -> Result<()>
     where
@@ -254,6 +265,14 @@ impl PrinterMonitor {
         let mut previous_printer: Option<Printer> = None;
 
         loop {
+            // Check for cancellation
+            if let Some(ref token) = cancel_token {
+                if token.is_cancelled() {
+                    info!("Printer monitoring for '{}' cancelled", printer_name);
+                    return Ok(());
+                }
+            }
+
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
                     info!("Checking printer: {}", current_printer.name());
@@ -298,7 +317,18 @@ impl PrinterMonitor {
                 }
             }
 
-            sleep(Duration::from_millis(interval_ms)).await;
+            // Sleep with cancellation support
+            if let Some(ref token) = cancel_token {
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(interval_ms)) => {},
+                    _ = token.cancelled() => {
+                        info!("Printer monitoring for '{}' cancelled during sleep", printer_name);
+                        return Ok(());
+                    }
+                }
+            } else {
+                sleep(Duration::from_millis(interval_ms)).await;
+            }
         }
     }
 
@@ -358,39 +388,50 @@ impl PrinterMonitor {
     /// # Arguments
     /// * `printer_name` - The name of the printer to monitor
     /// * `interval_ms` - Polling interval in milliseconds
+    /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when properties change, receives PrinterChanges
     ///
     /// # Returns
-    /// * `Result<()>` - Never returns Ok normally (runs indefinitely), only Err on failure
+    /// * `Result<()>` - Returns Ok when cancelled, or Err on failure
     ///
     /// # Behavior
     /// - The callback is **NOT** called on the initial state capture
     /// - Only actual property changes trigger the callback
     /// - Changes are always non-empty when the callback is invoked
     /// - The initial state is captured silently for comparison with future states
+    /// - Monitoring stops gracefully when the cancellation token is cancelled
     ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
+    /// use tokio_util::sync::CancellationToken;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
+    ///     let cancel_token = CancellationToken::new();
     ///
-    ///     monitor.monitor_printer_changes("HP LaserJet", 30000, |changes| {
-    ///         // Only called when properties actually change
-    ///         // changes.has_changes() is always true here
-    ///         println!("Detected {} changes:", changes.change_count());
-    ///         for change in &changes.changes {
-    ///             println!("  - {}", change.description());
-    ///         }
-    ///     }).await.unwrap();
+    ///     // Clone the token for the monitoring task
+    ///     let token_clone = cancel_token.clone();
+    ///     let handle = tokio::spawn(async move {
+    ///         monitor.monitor_printer_changes("HP LaserJet", 30000, Some(token_clone), |changes| {
+    ///             println!("Detected {} changes:", changes.change_count());
+    ///             for change in &changes.changes {
+    ///                 println!("  - {}", change.description());
+    ///             }
+    ///         }).await
+    ///     });
+    ///
+    ///     // Later: cancel monitoring
+    ///     cancel_token.cancel();
+    ///     handle.await.unwrap().unwrap();
     /// }
     /// ```
     pub async fn monitor_printer_changes<F>(
         &self,
         printer_name: &str,
         interval_ms: u64,
+        cancel_token: Option<CancellationToken>,
         mut callback: F,
     ) -> Result<()>
     where
@@ -404,6 +445,14 @@ impl PrinterMonitor {
         let mut previous_printer: Option<Printer> = None;
 
         loop {
+            // Check for cancellation
+            if let Some(ref token) = cancel_token {
+                if token.is_cancelled() {
+                    info!("Printer monitoring for '{}' cancelled", printer_name);
+                    return Ok(());
+                }
+            }
+
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
                     if let Some(ref prev) = previous_printer {
@@ -440,7 +489,18 @@ impl PrinterMonitor {
                 }
             }
 
-            sleep(Duration::from_millis(interval_ms)).await;
+            // Sleep with cancellation support
+            if let Some(ref token) = cancel_token {
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(interval_ms)) => {},
+                    _ = token.cancelled() => {
+                        info!("Printer monitoring for '{}' cancelled during sleep", printer_name);
+                        return Ok(());
+                    }
+                }
+            } else {
+                sleep(Duration::from_millis(interval_ms)).await;
+            }
         }
     }
 
@@ -453,19 +513,28 @@ impl PrinterMonitor {
     /// * `printer_name` - The name of the printer to monitor
     /// * `property` - The specific property to watch using MonitorableProperty enum
     /// * `interval_ms` - Polling interval in milliseconds
+    /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when the property changes
     ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::{PrinterMonitor, MonitorableProperty};
+    /// use tokio_util::sync::CancellationToken;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
-    ///     
-    ///     monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
-    ///         println!("Offline status changed: {}", change.description());
-    ///     }).await.unwrap();
+    ///     let cancel_token = CancellationToken::new();
+    ///
+    ///     monitor.monitor_property(
+    ///         "HP LaserJet",
+    ///         MonitorableProperty::IsOffline,
+    ///         60000,
+    ///         Some(cancel_token.clone()),
+    ///         |change| {
+    ///             println!("Offline status changed: {}", change.description());
+    ///         }
+    ///     ).await.unwrap();
     /// }
     /// ```
     pub async fn monitor_property<F>(
@@ -473,6 +542,7 @@ impl PrinterMonitor {
         printer_name: &str,
         property: MonitorableProperty,
         interval_ms: u64,
+        cancel_token: Option<CancellationToken>,
         mut callback: F,
     ) -> Result<()>
     where
@@ -484,7 +554,7 @@ impl PrinterMonitor {
             property_name, printer_name
         );
 
-        self.monitor_printer_changes(printer_name, interval_ms, move |changes| {
+        self.monitor_printer_changes(printer_name, interval_ms, cancel_token, move |changes| {
             for change in &changes.changes {
                 if change.property_name() == property_name {
                     callback(change);
@@ -502,40 +572,48 @@ impl PrinterMonitor {
     /// # Arguments
     /// * `printer_names` - List of printer names to monitor
     /// * `interval_ms` - Polling interval in milliseconds
+    /// * `cancel_token` - Optional cancellation token for graceful shutdown
     /// * `callback` - Function called when any printer changes (NOT called on initial state)
+    ///
+    /// # Returns
+    /// * `Result<()>` - Returns Ok when cancelled or all tasks complete, or Err on failure
     ///
     /// # Behavior
     /// - The callback is **NOT** called on the initial state capture for each printer
     /// - Only actual property changes trigger the callback
     /// - Each printer is monitored in a separate task for true concurrent monitoring
     /// - Callbacks are called outside of internal locks to prevent contention with slow callbacks
-    ///
-    /// # Implementation Note
-    /// Due to Rust's async lifetime constraints, this method creates a separate
-    /// `PrinterMonitor` instance for each printer. This is acceptable for most use cases
-    /// but may result in multiple backend connections (e.g., multiple WMI connections on Windows).
-    /// For monitoring a large number of printers, consider calling `monitor_printer_changes`
-    /// individually with your own task management.
+    /// - The monitor is cloned (cheaply via Arc) for each task, sharing the same backend connection
+    /// - Monitoring stops gracefully when the cancellation token is cancelled
     ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
+    /// use tokio_util::sync::CancellationToken;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let monitor = PrinterMonitor::new().await.unwrap();
     ///     let printers = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
+    ///     let cancel_token = CancellationToken::new();
     ///
-    ///     monitor.monitor_multiple_printers(printers, 30000, |changes| {
-    ///         // Only called when properties actually change, not on initial state
-    ///         println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
-    ///     }).await.unwrap();
+    ///     let token_clone = cancel_token.clone();
+    ///     let handle = tokio::spawn(async move {
+    ///         monitor.monitor_multiple_printers(printers, 30000, Some(token_clone), |changes| {
+    ///             println!("Printer '{}' changed: {}", changes.printer_name, changes.summary());
+    ///         }).await
+    ///     });
+    ///
+    ///     // Later: cancel monitoring
+    ///     cancel_token.cancel();
+    ///     handle.await.unwrap().unwrap();
     /// }
     /// ```
     pub async fn monitor_multiple_printers<F>(
         &self,
         printer_names: Vec<String>,
         interval_ms: u64,
+        cancel_token: Option<CancellationToken>,
         callback: F,
     ) -> Result<()>
     where
@@ -564,15 +642,21 @@ impl PrinterMonitor {
             let callback_clone = callback.clone();
             let printer_name_clone = printer_name.clone();
             let previous_states_clone = previous_states.clone();
+            let monitor_clone = self.clone(); // Cheap Arc clone - shares the same backend
+            let cancel_token_clone = cancel_token.clone();
 
-            // Share the backend by creating tasks that use the shared monitor
-            // We need to create a new monitor per task due to async lifetime constraints,
-            // but this is more efficient than the previous implementation
+            // Clone the monitor (cheap Arc clone) for each task, sharing the same backend connection
             let task = tokio::spawn(async move {
-                let local_monitor = PrinterMonitor::new().await?;
-
                 loop {
-                    match local_monitor.find_printer(&printer_name_clone).await {
+                    // Check for cancellation
+                    if let Some(ref token) = cancel_token_clone {
+                        if token.is_cancelled() {
+                            info!("Printer monitoring for '{}' cancelled", printer_name_clone);
+                            return Ok(());
+                        }
+                    }
+
+                    match monitor_clone.find_printer(&printer_name_clone).await {
                         Ok(Some(current_printer)) => {
                             // Acquire lock to check previous state and compute changes
                             let (changes_to_report, is_initial) = {
@@ -646,7 +730,18 @@ impl PrinterMonitor {
                         }
                     }
 
-                    sleep(Duration::from_millis(interval_ms)).await;
+                    // Sleep with cancellation support
+                    if let Some(ref token) = cancel_token_clone {
+                        tokio::select! {
+                            _ = sleep(Duration::from_millis(interval_ms)) => {},
+                            _ = token.cancelled() => {
+                                info!("Printer monitoring for '{}' cancelled during sleep", printer_name_clone);
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        sleep(Duration::from_millis(interval_ms)).await;
+                    }
                 }
             });
 
@@ -883,5 +978,119 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_token() {
+        use crate::CancellationToken;
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let cancel_token = CancellationToken::new();
+            let cancel_clone = cancel_token.clone();
+
+            // Spawn a task that will be cancelled
+            let handle = tokio::spawn(async move {
+                monitor
+                    .monitor_printer_changes(
+                        "NonExistentPrinter_Test",
+                        1000,
+                        Some(cancel_clone),
+                        |_changes| {
+                            // This should never be called
+                            panic!("Should not receive changes for nonexistent printer");
+                        },
+                    )
+                    .await
+            });
+
+            // Wait a bit then cancel
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_token.cancel();
+
+            // The task should complete quickly after cancellation
+            let result = timeout(Duration::from_secs(2), handle).await;
+            assert!(result.is_ok(), "Task should complete after cancellation");
+            if let Ok(Ok(task_result)) = result {
+                assert!(
+                    task_result.is_ok(),
+                    "Cancelled monitoring should return Ok"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_monitor_without_cancellation() {
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            // Monitor without a cancellation token should still work
+            let handle = tokio::spawn(async move {
+                monitor
+                    .monitor_printer_changes(
+                        "NonExistentPrinter_Test",
+                        5000,
+                        None, // No cancellation token
+                        |_changes| {
+                            // This should never be called
+                        },
+                    )
+                    .await
+            });
+
+            // Let it run a bit
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Abort the task since we have no cancellation token
+            handle.abort();
+
+            // Task should be aborted
+            let result = handle.await;
+            assert!(result.is_err(), "Task should be aborted");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multiple_printers_cancellation() {
+        use crate::CancellationToken;
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let cancel_token = CancellationToken::new();
+            let cancel_clone = cancel_token.clone();
+
+            let printer_names = vec!["Printer1".to_string(), "Printer2".to_string()];
+
+            // Spawn monitoring task
+            let handle = tokio::spawn(async move {
+                monitor
+                    .monitor_multiple_printers(printer_names, 1000, Some(cancel_clone), |_changes| {
+                        // Should not be called
+                    })
+                    .await
+            });
+
+            // Wait a bit then cancel
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_token.cancel();
+
+            // Should complete quickly
+            let result = timeout(Duration::from_secs(2), handle).await;
+            assert!(
+                result.is_ok(),
+                "Multi-printer monitoring should complete after cancellation"
+            );
+        }
+    }
+
+    #[test]
+    fn test_printer_monitor_is_clone() {
+        // Test that PrinterMonitor implements Clone
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<PrinterMonitor>();
     }
 }

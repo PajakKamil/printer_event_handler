@@ -66,6 +66,9 @@ pub use printer::{
     ErrorState, Printer, PrinterChanges, PrinterState, PrinterStatus, PropertyChange,
 };
 
+// Re-export CancellationToken for convenient access
+pub use tokio_util::sync::CancellationToken;
+
 /// Result type used throughout the library
 pub type Result<T> = std::result::Result<T, PrinterError>;
 
