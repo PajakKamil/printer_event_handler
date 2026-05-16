@@ -85,8 +85,12 @@ impl MonitorableProperty {
     }
 
     /// Returns all available properties that can be monitored.
-    pub fn all() -> Vec<MonitorableProperty> {
-        vec![
+    ///
+    /// Returns a `&'static` slice so callers don't pay for an allocation just
+    /// to enumerate the list. Use `.iter()` / `.contains(...)` / `.len()` as
+    /// you would with a `Vec` - all the slice methods are available.
+    pub fn all() -> &'static [MonitorableProperty] {
+        &[
             MonitorableProperty::Name,
             MonitorableProperty::Status,
             MonitorableProperty::State,
@@ -273,11 +277,11 @@ impl PrinterMonitor {
 
         loop {
             // Check for cancellation
-            if let Some(ref token) = cancel_token {
-                if token.is_cancelled() {
-                    info!("Printer monitoring for '{}' cancelled", printer_name);
-                    return Ok(());
-                }
+            if let Some(ref token) = cancel_token
+                && token.is_cancelled()
+            {
+                info!("Printer monitoring for '{}' cancelled", printer_name);
+                return Ok(());
             }
 
             match self.find_printer(printer_name).await {
@@ -466,11 +470,11 @@ impl PrinterMonitor {
 
         loop {
             // Check for cancellation
-            if let Some(ref token) = cancel_token {
-                if token.is_cancelled() {
-                    info!("Printer monitoring for '{}' cancelled", printer_name);
-                    return Ok(());
-                }
+            if let Some(ref token) = cancel_token
+                && token.is_cancelled()
+            {
+                info!("Printer monitoring for '{}' cancelled", printer_name);
+                return Ok(());
             }
 
             match self.find_printer(printer_name).await {
@@ -686,11 +690,11 @@ impl PrinterMonitor {
 
                 loop {
                     // Check for cancellation
-                    if let Some(ref token) = cancel_token_clone {
-                        if token.is_cancelled() {
-                            info!("Printer monitoring for '{}' cancelled", printer_name_clone);
-                            return Ok(());
-                        }
+                    if let Some(ref token) = cancel_token_clone
+                        && token.is_cancelled()
+                    {
+                        info!("Printer monitoring for '{}' cancelled", printer_name_clone);
+                        return Ok(());
                     }
 
                     match monitor_clone.find_printer(&printer_name_clone).await {

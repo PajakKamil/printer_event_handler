@@ -3,7 +3,7 @@
 //! This example demonstrates how to list all printers on the system with
 //! complete WMI information access including status codes and descriptions.
 //!
-//! Run with: cargo run --example basic_listing
+//! Run with: cargo run --manifest-path examples/Cargo.toml --bin basic_listing
 
 use printer_event_handler::{PrinterError, PrinterMonitor};
 

@@ -3,7 +3,7 @@
 //! This example demonstrates proper error handling patterns with the printer
 //! event handler library, including recovery strategies and graceful degradation.
 //!
-//! Run with: cargo run --example error_handling
+//! Run with: cargo run --manifest-path examples/Cargo.toml --bin error_handling
 
 use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::time::Duration;

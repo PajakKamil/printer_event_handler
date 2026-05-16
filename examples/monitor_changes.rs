@@ -3,8 +3,9 @@
 //! This example demonstrates how to monitor a specific printer for status changes
 //! and display detailed WMI information when changes occur.
 //!
-//! Run with: cargo run --example monitor_changes -- "Printer Name"
-//! Or: cargo run --example monitor_changes (for first available printer)
+//! Run with: cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer Name"
+//! Or:       cargo run --manifest-path examples/Cargo.toml --bin monitor_changes
+//! (the second form picks the first available printer)
 
 use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::env;

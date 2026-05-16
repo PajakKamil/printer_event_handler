@@ -953,6 +953,31 @@ impl Printer {
         })
     }
 
+    /// Returns human-readable description of ExtendedDetectedErrorState code.
+    ///
+    /// Microsoft documents this property's value set as identical to
+    /// DetectedErrorState (0-11), so this mirrors
+    /// [`Printer::detected_error_state_description`] but reads the raw
+    /// ExtendedDetectedErrorState code.
+    pub fn extended_detected_error_state_description(&self) -> Option<&'static str> {
+        self.extended_detected_error_state_code
+            .map(|code| match code {
+                0 => "Unknown (often No Error in practice)",
+                1 => "Other",
+                2 => "No Error",
+                3 => "Low Paper",
+                4 => "No Paper",
+                5 => "Low Toner",
+                6 => "No Toner",
+                7 => "Door Open",
+                8 => "Jammed",
+                9 => "Offline",
+                10 => "Service Requested",
+                11 => "Output Bin Full",
+                _ => "Unknown Extended Error Code",
+            })
+    }
+
     /// Returns human-readable description of ExtendedPrinterStatus code
     pub fn extended_printer_status_description(&self) -> Option<&'static str> {
         self.extended_printer_status_code.map(|code| match code {
@@ -979,96 +1004,40 @@ impl Printer {
     pub fn compare_with(&self, other: &Printer) -> PrinterChanges {
         let mut changes = PrinterChanges::new(self.name.clone());
 
-        // Check each property for changes
-        if self.name != other.name {
-            changes.changes.push(PropertyChange::Name {
-                old: self.name.clone(),
-                new: other.name.clone(),
-            });
+        // Two arms so we only call `.clone()` on non-Copy fields - avoids the
+        // `clippy::clone_on_copy` lint on bool/Option<u32> codes while keeping
+        // the call site compact.
+        macro_rules! diff {
+            (clone $variant:ident, $field:ident) => {
+                if self.$field != other.$field {
+                    changes.changes.push(PropertyChange::$variant {
+                        old: self.$field.clone(),
+                        new: other.$field.clone(),
+                    });
+                }
+            };
+            (copy $variant:ident, $field:ident) => {
+                if self.$field != other.$field {
+                    changes.changes.push(PropertyChange::$variant {
+                        old: self.$field,
+                        new: other.$field,
+                    });
+                }
+            };
         }
 
-        if self.status != other.status {
-            changes.changes.push(PropertyChange::Status {
-                old: self.status.clone(),
-                new: other.status.clone(),
-            });
-        }
-
-        if self.state != other.state {
-            changes.changes.push(PropertyChange::State {
-                old: self.state.clone(),
-                new: other.state.clone(),
-            });
-        }
-
-        if self.error_state != other.error_state {
-            changes.changes.push(PropertyChange::ErrorState {
-                old: self.error_state.clone(),
-                new: other.error_state.clone(),
-            });
-        }
-
-        if self.is_offline != other.is_offline {
-            changes.changes.push(PropertyChange::IsOffline {
-                old: self.is_offline,
-                new: other.is_offline,
-            });
-        }
-
-        if self.is_default != other.is_default {
-            changes.changes.push(PropertyChange::IsDefault {
-                old: self.is_default,
-                new: other.is_default,
-            });
-        }
-
-        if self.printer_status_code != other.printer_status_code {
-            changes.changes.push(PropertyChange::PrinterStatusCode {
-                old: self.printer_status_code,
-                new: other.printer_status_code,
-            });
-        }
-
-        if self.printer_state_code != other.printer_state_code {
-            changes.changes.push(PropertyChange::PrinterStateCode {
-                old: self.printer_state_code,
-                new: other.printer_state_code,
-            });
-        }
-
-        if self.detected_error_state_code != other.detected_error_state_code {
-            changes
-                .changes
-                .push(PropertyChange::DetectedErrorStateCode {
-                    old: self.detected_error_state_code,
-                    new: other.detected_error_state_code,
-                });
-        }
-
-        if self.extended_detected_error_state_code != other.extended_detected_error_state_code {
-            changes
-                .changes
-                .push(PropertyChange::ExtendedDetectedErrorStateCode {
-                    old: self.extended_detected_error_state_code,
-                    new: other.extended_detected_error_state_code,
-                });
-        }
-
-        if self.extended_printer_status_code != other.extended_printer_status_code {
-            changes
-                .changes
-                .push(PropertyChange::ExtendedPrinterStatusCode {
-                    old: self.extended_printer_status_code,
-                    new: other.extended_printer_status_code,
-                });
-        }
-
-        if self.wmi_status != other.wmi_status {
-            changes.changes.push(PropertyChange::WmiStatus {
-                old: self.wmi_status.clone(),
-                new: other.wmi_status.clone(),
-            });
-        }
+        diff!(clone Name, name);
+        diff!(clone Status, status);
+        diff!(clone State, state);
+        diff!(clone ErrorState, error_state);
+        diff!(copy IsOffline, is_offline);
+        diff!(copy IsDefault, is_default);
+        diff!(copy PrinterStatusCode, printer_status_code);
+        diff!(copy PrinterStateCode, printer_state_code);
+        diff!(copy DetectedErrorStateCode, detected_error_state_code);
+        diff!(copy ExtendedDetectedErrorStateCode, extended_detected_error_state_code);
+        diff!(copy ExtendedPrinterStatusCode, extended_printer_status_code);
+        diff!(clone WmiStatus, wmi_status);
 
         changes
     }

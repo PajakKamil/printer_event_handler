@@ -121,8 +121,7 @@ mod tests {
 
     #[test]
     fn test_from_boxed_error() {
-        let boxed_err: Box<dyn std::error::Error> =
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test error"));
+        let boxed_err: Box<dyn std::error::Error> = Box::new(std::io::Error::other("test error"));
         let printer_err: PrinterError = boxed_err.into();
 
         match printer_err {
@@ -181,10 +180,7 @@ mod tests {
         is_error(&PrinterError::CupsError("test".to_string()));
         is_error(&PrinterError::PrinterNotFound("test".to_string()));
         is_error(&PrinterError::PlatformNotSupported);
-        is_error(&PrinterError::IoError(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "test",
-        )));
+        is_error(&PrinterError::IoError(std::io::Error::other("test")));
         is_error(&PrinterError::Other("test".to_string()));
     }
 }

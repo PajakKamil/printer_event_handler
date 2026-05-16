@@ -3,7 +3,7 @@
 //! This example demonstrates the new property-level monitoring features that can
 //! detect changes in individual printer properties and provide detailed change tracking.
 //!
-//! Run with: cargo run --example property_monitoring
+//! Run with: cargo run --manifest-path examples/Cargo.toml --bin property_monitoring
 
 use printer_event_handler::{MonitorableProperty, PrinterError, PrinterMonitor};
 use std::env;

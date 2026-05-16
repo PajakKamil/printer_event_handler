@@ -4,7 +4,7 @@
 //! printer monitoring tasks. This is useful for implementing clean shutdown,
 //! responsive UI controls, or conditional monitoring based on application state.
 //!
-//! Run with: cargo run --bin cancellation_token_example
+//! Run with: cargo run --manifest-path examples/Cargo.toml --bin cancellation_token_example
 
 use printer_event_handler::{MonitorableProperty, PrinterError, PrinterMonitor};
 use std::env;

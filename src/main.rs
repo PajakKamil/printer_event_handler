@@ -2,6 +2,12 @@ use log::error;
 use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::env;
 
+/// Polling interval for the CLI's monitor mode. Sixty seconds is a deliberate
+/// human-scale default - tight enough that operators see status drift within a
+/// minute, loose enough that the WMI/CUPS load is negligible.
+const CLI_MONITOR_INTERVAL_MS: u64 = 60_000;
+const CLI_MONITOR_INTERVAL_SECS: u64 = CLI_MONITOR_INTERVAL_MS / 1_000;
+
 /// Monitors a specific printer and displays status changes in the CLI.
 ///
 /// This function implements the monitoring mode of the CLI application,
@@ -24,49 +30,57 @@ async fn monitor_printer_cli(printer_name: &str) -> Result<(), PrinterError> {
 
     println!("Printer Status Monitor Service");
     println!("==============================");
-    println!("Monitoring printer '{}' every 60 seconds...", printer_name);
+    println!(
+        "Monitoring printer '{}' every {} seconds...",
+        printer_name, CLI_MONITOR_INTERVAL_SECS
+    );
     println!("Press Ctrl+C to stop\n");
 
     monitor
-        .monitor_printer(printer_name, 60000, None, |current, previous| {
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        .monitor_printer(
+            printer_name,
+            CLI_MONITOR_INTERVAL_MS,
+            None,
+            |current, previous| {
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
 
-            if let Some(prev) = previous {
-                if prev != current {
+                if let Some(prev) = previous {
+                    if prev != current {
+                        println!(
+                            "[{}] Printer '{}' Status Changed:",
+                            timestamp,
+                            current.name()
+                        );
+                        println!(
+                            "  Status: {} -> {}",
+                            prev.status_description(),
+                            current.status_description()
+                        );
+                        println!(
+                            "  Error State: {} -> {}",
+                            prev.error_description(),
+                            current.error_description()
+                        );
+                    } else {
+                        println!("[{}] Checking printer '{}'", timestamp, current.name());
+                    }
+                } else {
                     println!(
-                        "[{}] Printer '{}' Status Changed:",
+                        "[{}] Printer '{}' Initial Status:",
                         timestamp,
                         current.name()
                     );
-                    println!(
-                        "  Status: {} -> {}",
-                        prev.status_description(),
-                        current.status_description()
-                    );
-                    println!(
-                        "  Error State: {} -> {}",
-                        prev.error_description(),
-                        current.error_description()
-                    );
-                } else {
-                    println!("[{}] Checking printer '{}'", timestamp, current.name());
+                    println!("  Status: {}", current.status_description());
+                    println!("  Error State: {}", current.error_description());
                 }
-            } else {
-                println!(
-                    "[{}] Printer '{}' Initial Status:",
-                    timestamp,
-                    current.name()
-                );
-                println!("  Status: {}", current.status_description());
-                println!("  Error State: {}", current.error_description());
-            }
 
-            println!(
-                "  Offline: {}",
-                if current.is_offline() { "Yes" } else { "No" }
-            );
-            println!();
-        })
+                println!(
+                    "  Offline: {}",
+                    if current.is_offline() { "Yes" } else { "No" }
+                );
+                println!();
+            },
+        )
         .await?;
 
     Ok(())
