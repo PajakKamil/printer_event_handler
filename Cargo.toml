@@ -1,12 +1,15 @@
 [package]
 name = "printer_event_handler"
 version = "1.4.0"
-edition = "2021"
+edition = "2024"
 description = "A cross-platform printer status monitoring library for Windows and Linux"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/PajakKamil/printer_event_handler"
 keywords = ["printer", "monitoring", "cups", "wmi", "cross-platform"]
 categories = ["os", "api-bindings"]
+# Examples have their own Cargo.toml under examples/ - prevent cargo from
+# auto-discovering examples/*.rs as targets of the parent crate.
+autoexamples = false
 
 [[bin]]
 name = "printer_monitor"
@@ -18,13 +21,13 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync"] }
-tokio-util = "0.7"
-log = "0.4.28"
-env_logger = "0.11.8"
-chrono = { version = "0.4.42", features = ["serde"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync"] }
+tokio-util = "0.7.18"
+log = "0.4.29"
+env_logger = "0.11.10"
+chrono = { version = "0.4.44", features = ["serde"] }
 async-trait = "0.1.89"
 
 [target.'cfg(windows)'.dependencies]
-wmi = "0.17.2"
+wmi = "0.18.4"
 

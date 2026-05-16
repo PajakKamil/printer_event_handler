@@ -35,14 +35,14 @@ impl PrinterBackend for WindowsBackend {
     async fn list_printers(&self) -> Result<Vec<Printer>> {
         use crate::printer::Win32Printer;
         use log::info;
-        use wmi::COMLibrary;
 
         info!("Querying printer information via WMI...");
 
-        // Run WMI operations in a blocking task to avoid Send/Sync issues
+        // Run WMI operations in a blocking task to avoid Send/Sync issues.
+        // Since wmi 0.18, WMIConnection::new() initializes COM internally;
+        // COMLibrary was removed.
         let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
-            let com_con = COMLibrary::new().map_err(PrinterError::from)?;
-            let wmi_connection = wmi::WMIConnection::new(com_con).map_err(PrinterError::from)?;
+            let wmi_connection = wmi::WMIConnection::new().map_err(PrinterError::from)?;
             // Use SELECT * to avoid issues with reserved keyword 'Default'
             let printers: Vec<Win32Printer> = wmi_connection
                 .raw_query("SELECT * FROM Win32_Printer")
