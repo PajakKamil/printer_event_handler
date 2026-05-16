@@ -12,12 +12,35 @@ use tokio_util::sync::CancellationToken;
 /// CUPS unreachable) - a single WMI hiccup no longer kills monitoring.
 const MAX_CONSECUTIVE_MONITOR_ERRORS: u32 = 5;
 
+/// Per-printer state carried across polls inside `monitor_multiple_printers`.
+///
+/// `snapshot` is the next-comparison baseline. After a fresh disappearance it
+/// is replaced with a synthetic "missing" snapshot (Offline / UnknownError /
+/// is_offline=true) so the reappearance comparison surfaces the
+/// `IsOffline: true -> false` delta plus any other property differences (B4).
+/// `was_present_last_poll` distinguishes a fresh disappearance from continued
+/// absence, ensuring the disappearance callback fires exactly once per gap.
+#[derive(Debug, Clone)]
+struct PresenceTracker {
+    snapshot: Option<Printer>,
+    was_present_last_poll: bool,
+}
+
+impl PresenceTracker {
+    fn new() -> Self {
+        Self {
+            snapshot: None,
+            was_present_last_poll: false,
+        }
+    }
+}
+
 /// Enum representing all available printer properties that can be monitored.
 ///
 /// This enum provides type-safe access to all printer properties that can be
 /// monitored for changes, replacing string-based property names with a
 /// strongly-typed interface.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MonitorableProperty {
     /// Printer name changes
     Name,
@@ -422,6 +445,9 @@ impl PrinterMonitor {
     /// - Only actual property changes trigger the callback
     /// - Changes are always non-empty when the callback is invoked
     /// - The initial state is captured silently for comparison with future states
+    /// - Disappearance fires a synthetic `IsOffline: false -> true` change
+    /// - Reappearance fires a change set comparing the missing-state snapshot
+    ///   with the current printer (typically includes `IsOffline: true -> false`)
     /// - Monitoring stops gracefully when the cancellation token is cancelled
     ///
     /// # Example
@@ -465,7 +491,12 @@ impl PrinterMonitor {
             printer_name
         );
 
+        // `previous_printer` is the snapshot the next poll compares against.
+        // After a disappearance it's replaced with a synthetic "missing"
+        // snapshot so reappearance surfaces the IsOffline:true->false delta and
+        // any other properties that changed during the gap (B4).
         let mut previous_printer: Option<Printer> = None;
+        let mut was_present: bool = false;
         let mut consecutive_errors: u32 = 0;
 
         loop {
@@ -495,19 +526,32 @@ impl PrinterMonitor {
                         info!("Printer '{}' - Initial state captured", printer_name);
                     }
                     previous_printer = Some(current_printer);
+                    was_present = true;
                 }
                 Ok(None) => {
                     consecutive_errors = 0;
                     warn!("Printer '{}' not found", printer_name);
-                    if let Some(prev) = previous_printer.take() {
-                        // Printer disappeared - create a change showing it went offline
-                        let mut changes = PrinterChanges::new(printer_name.to_string());
-                        changes.changes.push(crate::PropertyChange::IsOffline {
-                            old: prev.is_offline(),
-                            new: true,
-                        });
-                        callback(&changes);
+                    if was_present {
+                        if let Some(ref prev) = previous_printer {
+                            // Fresh disappearance - synthesize an IsOffline change.
+                            let mut changes = PrinterChanges::new(printer_name.to_string());
+                            changes.changes.push(crate::PropertyChange::IsOffline {
+                                old: prev.is_offline(),
+                                new: true,
+                            });
+                            callback(&changes);
+                        }
+                        // Replace with a synthetic "missing" snapshot so the
+                        // next successful poll surfaces the reappearance.
+                        previous_printer = Some(Printer::new(
+                            printer_name.to_string(),
+                            crate::PrinterStatus::Offline,
+                            crate::ErrorState::UnknownError,
+                            true,
+                            false,
+                        ));
                     }
+                    was_present = false;
                 }
                 Err(e) => {
                     consecutive_errors += 1;
@@ -617,6 +661,9 @@ impl PrinterMonitor {
     /// # Behavior
     /// - The callback is **NOT** called on the initial state capture for each printer
     /// - Only actual property changes trigger the callback
+    /// - Disappearance fires a synthetic `IsOffline: false -> true` change once per gap
+    /// - Reappearance fires a change set comparing the missing-state snapshot
+    ///   with the current printer (typically includes `IsOffline: true -> false`)
     /// - Each printer is monitored in a separate task for true concurrent monitoring
     /// - Callbacks are called outside of internal locks to prevent contention with slow callbacks
     /// - The monitor is cloned (cheaply via Arc) for each task, sharing the same backend connection
@@ -668,11 +715,11 @@ impl PrinterMonitor {
         // siblings via `abort_all()`, preventing the orphaned-poller leak that
         // happened when the caller passed no CancellationToken.
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
-        let mut previous_states: HashMap<String, Option<Printer>> = HashMap::new();
+        let mut previous_states: HashMap<String, PresenceTracker> = HashMap::new();
 
-        // Initialize previous states
+        // Initialize per-printer trackers
         for name in &printer_names {
-            previous_states.insert(name.clone(), None);
+            previous_states.insert(name.clone(), PresenceTracker::new());
         }
 
         let previous_states = Arc::new(tokio::sync::Mutex::new(previous_states));
@@ -703,10 +750,11 @@ impl PrinterMonitor {
                             // Acquire lock to check previous state and compute changes
                             let (changes_to_report, is_initial) = {
                                 let mut states = previous_states_clone.lock().await;
-                                let previous =
-                                    states.get(&printer_name_clone).and_then(|p| p.as_ref());
+                                let tracker = states
+                                    .entry(printer_name_clone.clone())
+                                    .or_insert_with(PresenceTracker::new);
 
-                                let result = if let Some(prev) = previous {
+                                let result = if let Some(ref prev) = tracker.snapshot {
                                     let changes = prev.compare_with(&current_printer);
                                     if changes.has_changes() {
                                         (Some(changes), false)
@@ -714,12 +762,12 @@ impl PrinterMonitor {
                                         (None, false)
                                     }
                                 } else {
-                                    // Initial state - no callback on first check
+                                    // Never seen this printer before - silent capture.
                                     (None, true)
                                 };
 
-                                // Update state before releasing lock
-                                states.insert(printer_name_clone.clone(), Some(current_printer));
+                                tracker.snapshot = Some(current_printer);
+                                tracker.was_present_last_poll = true;
                                 result
                             };
                             // Lock is released here
@@ -740,24 +788,41 @@ impl PrinterMonitor {
                             consecutive_errors = 0;
                             warn!("Printer '{}' not found", printer_name_clone);
 
-                            // Acquire lock to check if printer disappeared
+                            // Acquire lock to handle disappearance / continued absence.
                             let changes_to_report = {
                                 let mut states = previous_states_clone.lock().await;
-                                let changes =
-                                    if let Some(Some(prev)) = states.get(&printer_name_clone) {
-                                        // Printer disappeared - create a change showing it went offline
+                                let tracker = states
+                                    .entry(printer_name_clone.clone())
+                                    .or_insert_with(PresenceTracker::new);
+
+                                let changes = if tracker.was_present_last_poll {
+                                    // Fresh disappearance - synthesize IsOffline transition.
+                                    tracker.snapshot.as_ref().map(|prev| {
                                         let mut changes =
                                             PrinterChanges::new(printer_name_clone.clone());
                                         changes.changes.push(crate::PropertyChange::IsOffline {
                                             old: prev.is_offline(),
                                             new: true,
                                         });
-                                        Some(changes)
-                                    } else {
-                                        None
-                                    };
+                                        changes
+                                    })
+                                } else {
+                                    None
+                                };
 
-                                states.insert(printer_name_clone.clone(), None);
+                                if tracker.was_present_last_poll {
+                                    // Replace the snapshot with a synthetic "missing"
+                                    // baseline so the next successful poll surfaces
+                                    // the reappearance delta (B4).
+                                    tracker.snapshot = Some(Printer::new(
+                                        printer_name_clone.clone(),
+                                        crate::PrinterStatus::Offline,
+                                        crate::ErrorState::UnknownError,
+                                        true,
+                                        false,
+                                    ));
+                                }
+                                tracker.was_present_last_poll = false;
                                 changes
                             };
                             // Lock is released here
@@ -816,9 +881,29 @@ impl PrinterMonitor {
                     // Sibling aborted via abort_all() above - expected, ignore.
                 }
                 Err(je) => {
-                    error!("Monitoring task panicked: {}", je);
                     tasks.abort_all();
-                    return Err(crate::PrinterError::Other(format!("Task panicked: {}", je)));
+                    // Distinguish panic from other join errors and pull the
+                    // payload string out of a panic so the caller can see what
+                    // actually went wrong. JoinError's Display only includes
+                    // "task panicked" / "task was cancelled" without the
+                    // payload, which is what F6 was about.
+                    let detail = if je.is_panic() {
+                        match je.try_into_panic() {
+                            Ok(payload) => {
+                                let msg = payload
+                                    .downcast_ref::<&'static str>()
+                                    .map(|s| (*s).to_string())
+                                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                                format!("monitoring task panicked: {}", msg)
+                            }
+                            Err(je) => format!("monitoring task panicked: {}", je),
+                        }
+                    } else {
+                        format!("monitoring task join failed: {}", je)
+                    };
+                    error!("{}", detail);
+                    return Err(crate::PrinterError::Other(detail));
                 }
             }
         }

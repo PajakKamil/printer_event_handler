@@ -35,7 +35,7 @@ const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
 ///
 /// This is the current WMI property for printer status information.
 /// Values 1-7 according to Microsoft documentation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrinterStatus {
     Other,           // 1
     Unknown,         // 2
@@ -52,7 +52,7 @@ pub enum PrinterStatus {
 /// This enum represents the actual WMI PrinterState values which correspond to
 /// the .NET System.Printing.PrintQueueStatus enumeration flags.
 /// See: <https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus>
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrinterState {
     None,                     // 0 - No status
     Paused,                   // 1 - The print queue is paused
@@ -328,7 +328,7 @@ impl std::fmt::Display for PrinterState {
 }
 
 /// Represents a printer's error state
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ErrorState {
     NoError,
     Other,
@@ -424,7 +424,7 @@ impl std::fmt::Display for ErrorState {
 }
 
 /// Represents a change in a specific printer property
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PropertyChange {
     Name {
         old: String,
@@ -654,13 +654,23 @@ pub struct Printer {
 }
 
 impl Printer {
+    /// Unions an explicit `is_offline` hint with what `status`/`state` already
+    /// imply. The stored boolean cannot drift below the typed fields - if the
+    /// status says Offline or the state is unreachable, the printer is offline
+    /// regardless of the bool passed by the caller.
+    fn derive_is_offline(status: &PrinterStatus, state: Option<&PrinterState>, hint: bool) -> bool {
+        hint || matches!(status, PrinterStatus::Offline)
+            || state.is_some_and(PrinterState::is_offline)
+    }
+
     /// Creates a new Printer instance with the specified properties.
     ///
     /// # Arguments
     /// * `name` - The printer's name as it appears in the system
     /// * `status` - Current operational status of the printer
     /// * `error_state` - Current error condition, if any
-    /// * `is_offline` - Whether the printer is currently offline
+    /// * `is_offline` - Offline hint. The stored value is `hint || status==Offline || state.is_offline()`,
+    ///   so passing `false` here cannot silently override a typed Offline status.
     /// * `is_default` - Whether this is the system's default printer
     ///
     /// # Returns
@@ -685,6 +695,7 @@ impl Printer {
         is_offline: bool,
         is_default: bool,
     ) -> Self {
+        let is_offline = Self::derive_is_offline(&status, None, is_offline);
         Self {
             name,
             status,
@@ -710,6 +721,7 @@ impl Printer {
         is_offline: bool,
         is_default: bool,
     ) -> Self {
+        let is_offline = Self::derive_is_offline(&status, state.as_ref(), is_offline);
         Self {
             name,
             status,
@@ -737,6 +749,7 @@ impl Printer {
         is_default: bool,
         wmi_codes: WmiStatusCodes,
     ) -> Self {
+        let is_offline = Self::derive_is_offline(&status, state.as_ref(), is_offline);
         Self {
             name,
             status,
@@ -1484,6 +1497,75 @@ mod tests {
         assert_eq!(ErrorState::from_u32(Some(11)), ErrorState::OutputBinFull);
         assert_eq!(ErrorState::from_u32(Some(99)), ErrorState::UnknownError);
         assert_eq!(ErrorState::from_u32(None), ErrorState::UnknownError);
+    }
+
+    #[test]
+    fn test_is_offline_cannot_drift_below_status() {
+        // B9 regression guard: passing `is_offline=false` MUST NOT silently
+        // contradict a status of Offline.
+        let printer = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Offline,
+            ErrorState::NoError,
+            false,
+            false,
+        );
+        assert!(printer.is_offline());
+
+        // Same via `new_with_state` with an unreachable state.
+        let printer = Printer::new_with_state(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            Some(PrinterState::Offline),
+            ErrorState::NoError,
+            false,
+            false,
+        );
+        assert!(printer.is_offline());
+
+        // Hint=true wins by itself.
+        let printer = Printer::new(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            ErrorState::NoError,
+            true,
+            false,
+        );
+        assert!(printer.is_offline());
+
+        // All-consistent online state stays online.
+        let printer = Printer::new_with_state(
+            "Test Printer".to_string(),
+            PrinterStatus::Idle,
+            Some(PrinterState::Printing),
+            ErrorState::NoError,
+            false,
+            false,
+        );
+        assert!(!printer.is_offline());
+    }
+
+    #[test]
+    fn test_enums_hashable_for_collections() {
+        use std::collections::HashSet;
+
+        // PrinterStatus, PrinterState, ErrorState should all be usable in HashSet/HashMap.
+        let mut statuses: HashSet<PrinterStatus> = HashSet::new();
+        statuses.insert(PrinterStatus::Idle);
+        statuses.insert(PrinterStatus::Printing);
+        statuses.insert(PrinterStatus::Idle);
+        assert_eq!(statuses.len(), 2);
+
+        let mut states: HashSet<PrinterState> = HashSet::new();
+        states.insert(PrinterState::Printing);
+        states.insert(PrinterState::PaperJam);
+        assert_eq!(states.len(), 2);
+
+        let mut errors: HashSet<ErrorState> = HashSet::new();
+        errors.insert(ErrorState::NoError);
+        errors.insert(ErrorState::Jammed);
+        errors.insert(ErrorState::NoError);
+        assert_eq!(errors.len(), 2);
     }
 
     #[test]
