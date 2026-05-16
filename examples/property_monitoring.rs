@@ -73,7 +73,7 @@ async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, Pri
 
 /// Demonstrate detailed property change monitoring
 async fn demonstrate_detailed_monitoring(
-    _monitor: &PrinterMonitor,
+    monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!("Starting detailed monitoring for: {}", printer_name);
@@ -81,12 +81,13 @@ async fn demonstrate_detailed_monitoring(
 
     let printer_name_clone = printer_name.to_string();
 
-    // Start monitoring in a background task
+    // Start monitoring in a background task - clone the existing monitor
+    // (cheap Arc clone, shares the same backend) rather than re-initialising.
     let monitoring_task = {
         let printer_name = printer_name_clone.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let new_monitor = PrinterMonitor::new().await?;
-            new_monitor
+            monitor
                 .monitor_printer_changes(&printer_name, 1000, None, |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
 
@@ -133,7 +134,7 @@ async fn demonstrate_detailed_monitoring(
 
 /// Demonstrate monitoring specific properties
 async fn demonstrate_specific_property_monitoring(
-    _monitor: &PrinterMonitor,
+    monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!("Monitoring specific properties for: {}", printer_name);
@@ -143,9 +144,9 @@ async fn demonstrate_specific_property_monitoring(
     let printer_name1 = printer_name.to_string();
     let offline_task = {
         let printer_name = printer_name1.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let new_monitor = PrinterMonitor::new().await?;
-            new_monitor
+            monitor
                 .monitor_property(
                     &printer_name,
                     MonitorableProperty::IsOffline,
@@ -163,9 +164,9 @@ async fn demonstrate_specific_property_monitoring(
     let printer_name2 = printer_name.to_string();
     let status_task = {
         let printer_name = printer_name2.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let new_monitor = PrinterMonitor::new().await?;
-            new_monitor
+            monitor
                 .monitor_property(
                     &printer_name,
                     MonitorableProperty::Status,
@@ -207,9 +208,9 @@ async fn demonstrate_multiple_printer_monitoring(
         if !printers.is_empty() {
             let printer_names = vec![printers[0].name().to_string()];
             let monitoring_task = {
+                let monitor = monitor.clone();
                 tokio::spawn(async move {
-                    let new_monitor = PrinterMonitor::new().await?;
-                    new_monitor
+                    monitor
                         .monitor_multiple_printers(printer_names, 1000, None, |changes| {
                             if changes.has_changes() {
                                 println!(
@@ -247,9 +248,9 @@ async fn demonstrate_multiple_printer_monitoring(
     println!("This will run for 25 seconds...\n");
 
     let monitoring_task = {
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let new_monitor = PrinterMonitor::new().await?;
-            new_monitor
+            monitor
                 .monitor_multiple_printers(printer_names, 1000, None, |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
                     if changes.has_changes() {

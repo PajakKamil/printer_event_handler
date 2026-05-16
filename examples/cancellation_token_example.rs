@@ -82,7 +82,7 @@ async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, Pri
 
 /// Example 1: Basic cancellation - start monitoring and cancel after a timeout
 async fn basic_cancellation_example(
-    _monitor: &PrinterMonitor,
+    monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!("Starting monitoring for 10 seconds, then cancelling...");
@@ -91,10 +91,10 @@ async fn basic_cancellation_example(
     let cancel_token = CancellationToken::new();
     let cancel_token_clone = cancel_token.clone();
 
-    // Spawn monitoring task
+    // Spawn monitoring task - clone the existing monitor (cheap Arc clone).
     let printer_name_owned = printer_name.to_string();
     let monitor_task = {
-        let monitor = PrinterMonitor::new().await?;
+        let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
                 .monitor_printer_changes(
@@ -133,8 +133,8 @@ async fn basic_cancellation_example(
 }
 
 /// Example 2: Multiple monitors with individual cancellation
-async fn multiple_monitors_cancellation(_monitor: &PrinterMonitor) -> Result<(), PrinterError> {
-    let printers = _monitor.list_printers().await?;
+async fn multiple_monitors_cancellation(monitor: &PrinterMonitor) -> Result<(), PrinterError> {
+    let printers = monitor.list_printers().await?;
 
     if printers.is_empty() {
         println!("No printers found for this example");
@@ -162,13 +162,13 @@ async fn multiple_monitors_cancellation(_monitor: &PrinterMonitor) -> Result<(),
             cancel_duration.as_secs()
         );
 
-        // Spawn monitoring task
+        // Spawn monitoring task - clone the existing monitor (Arc clone).
         let cancel_clone = cancel_token.clone();
         let task = {
             let printer_name_clone = printer_name.clone();
+            let monitor = monitor.clone();
             tokio::spawn(async move {
-                let new_monitor = PrinterMonitor::new().await?;
-                new_monitor
+                monitor
                     .monitor_property(
                         &printer_name_clone,
                         MonitorableProperty::Status,
@@ -211,7 +211,7 @@ async fn multiple_monitors_cancellation(_monitor: &PrinterMonitor) -> Result<(),
 
 /// Example 3: Coordinated shutdown - cancel all monitors at once
 async fn coordinated_shutdown(
-    _monitor: &PrinterMonitor,
+    monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!(
@@ -222,15 +222,16 @@ async fn coordinated_shutdown(
     // Single cancellation token for all monitors
     let cancel_token = CancellationToken::new();
 
-    // Start multiple monitoring tasks with the same cancellation token
+    // Start multiple monitoring tasks with the same cancellation token.
+    // All three tasks share the same backend via cheap Arc clones.
     let printer_name_owned = printer_name.to_string();
 
     // Monitor 1: General changes
     let task1 = {
         let cancel = cancel_token.clone();
         let name = printer_name_owned.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let monitor = PrinterMonitor::new().await?;
             monitor
                 .monitor_printer_changes(&name, 2000, Some(cancel), |changes| {
                     if changes.has_changes() {
@@ -245,8 +246,8 @@ async fn coordinated_shutdown(
     let task2 = {
         let cancel = cancel_token.clone();
         let name = printer_name_owned.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let monitor = PrinterMonitor::new().await?;
             monitor
                 .monitor_property(
                     &name,
@@ -265,8 +266,8 @@ async fn coordinated_shutdown(
     let task3 = {
         let cancel = cancel_token.clone();
         let name = printer_name_owned.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let monitor = PrinterMonitor::new().await?;
             monitor
                 .monitor_property(
                     &name,
@@ -301,7 +302,7 @@ async fn coordinated_shutdown(
 
 /// Example 4: Conditional cancellation - cancel based on printer state
 async fn conditional_cancellation(
-    _monitor: &PrinterMonitor,
+    monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!(
@@ -314,12 +315,12 @@ async fn conditional_cancellation(
     let cancel_for_monitor = cancel_token.clone();
     let cancel_for_timeout = cancel_token.clone();
 
-    // Start monitoring
+    // Start monitoring - both spawns share the outer monitor via Arc clone.
     let printer_name_owned = printer_name.to_string();
     let monitor_task = {
         let name = printer_name_owned.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let monitor = PrinterMonitor::new().await?;
             monitor
                 .monitor_printer_changes(&name, 1000, Some(cancel_for_monitor), |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
@@ -337,8 +338,8 @@ async fn conditional_cancellation(
     let state_check_task = {
         let name = printer_name_owned.clone();
         let cancel = cancel_token.clone();
+        let monitor = monitor.clone();
         tokio::spawn(async move {
-            let monitor = PrinterMonitor::new().await?;
             let mut interval = tokio::time::interval(Duration::from_secs(2));
 
             loop {

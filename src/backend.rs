@@ -22,6 +22,52 @@ pub trait PrinterBackend: Send + Sync {
 #[cfg(windows)]
 pub struct WindowsBackend;
 
+/// Runs the Win32_Printer query reusing a thread-local `WMIConnection`.
+///
+/// `wmi::WMIConnection` is `!Send + !Sync` because it holds COM state tied to
+/// the thread that created it, so the previous code paid the COM init cost on
+/// every `list_printers` call. Storing the connection in a `thread_local!` lets
+/// each tokio blocking-pool thread initialise it once and reuse it for the
+/// lifetime of the thread. On query failure the cache is cleared so the next
+/// call rebuilds the connection - covers WMI service restarts and stale
+/// handles.
+#[cfg(windows)]
+fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
+    use crate::printer::Win32Printer;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static WMI_CONNECTION: RefCell<Option<wmi::WMIConnection>> = const { RefCell::new(None) };
+    }
+
+    WMI_CONNECTION.with(|cell| -> Result<Vec<Win32Printer>> {
+        // Lazy init: scope the mutable borrow so it's released before the query.
+        {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(wmi::WMIConnection::new().map_err(PrinterError::from)?);
+            }
+        }
+
+        // SELECT * because WQL treats "Default" as a reserved keyword.
+        let query_result = {
+            let slot = cell.borrow();
+            let conn = slot.as_ref().expect("connection initialised above");
+            conn.raw_query::<Win32Printer>("SELECT * FROM Win32_Printer")
+        };
+
+        match query_result {
+            Ok(printers) => Ok(printers),
+            Err(e) => {
+                // Drop the (possibly stale) cached connection so the next call
+                // can recover from WMI service restarts or expired sessions.
+                *cell.borrow_mut() = None;
+                Err(PrinterError::from(e))
+            }
+        }
+    })
+}
+
 #[cfg(windows)]
 #[async_trait]
 impl PrinterBackend for WindowsBackend {
@@ -33,24 +79,13 @@ impl PrinterBackend for WindowsBackend {
     }
 
     async fn list_printers(&self) -> Result<Vec<Printer>> {
-        use crate::printer::Win32Printer;
         use log::info;
 
         info!("Querying printer information via WMI...");
 
-        // Run WMI operations in a blocking task to avoid Send/Sync issues.
-        // Since wmi 0.18, WMIConnection::new() initializes COM internally;
-        // COMLibrary was removed.
-        let wmi_printers = tokio::task::spawn_blocking(|| -> Result<Vec<Win32Printer>> {
-            let wmi_connection = wmi::WMIConnection::new().map_err(PrinterError::from)?;
-            // Use SELECT * to avoid issues with reserved keyword 'Default'
-            let printers: Vec<Win32Printer> = wmi_connection
-                .raw_query("SELECT * FROM Win32_Printer")
-                .map_err(PrinterError::from)?;
-            Ok(printers)
-        })
-        .await
-        .map_err(|e| PrinterError::Other(format!("Failed to execute WMI query: {}", e)))??;
+        let wmi_printers = tokio::task::spawn_blocking(query_win32_printers_cached)
+            .await
+            .map_err(|e| PrinterError::Other(format!("Failed to execute WMI query: {}", e)))??;
 
         let printers = wmi_printers.into_iter().map(Printer::from).collect();
         Ok(printers)
