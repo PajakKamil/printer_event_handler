@@ -145,15 +145,21 @@ mod tests {
     #[test]
     fn test_error_source_other_errors() {
         // Other error types shouldn't have a source
-        assert!(PrinterError::WmiError("test".to_string())
-            .source()
-            .is_none());
-        assert!(PrinterError::CupsError("test".to_string())
-            .source()
-            .is_none());
-        assert!(PrinterError::PrinterNotFound("test".to_string())
-            .source()
-            .is_none());
+        assert!(
+            PrinterError::WmiError("test".to_string())
+                .source()
+                .is_none()
+        );
+        assert!(
+            PrinterError::CupsError("test".to_string())
+                .source()
+                .is_none()
+        );
+        assert!(
+            PrinterError::PrinterNotFound("test".to_string())
+                .source()
+                .is_none()
+        );
         assert!(PrinterError::PlatformNotSupported.source().is_none());
         assert!(PrinterError::Other("test".to_string()).source().is_none());
     }

@@ -1,10 +1,16 @@
-use crate::backend::{create_backend, PrinterBackend};
+use crate::backend::{PrinterBackend, create_backend};
 use crate::{Printer, PrinterChanges, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
+
+/// How many consecutive transient backend errors a monitor loop tolerates
+/// before propagating the failure to the caller. A successful poll resets the
+/// counter, so this only fires for sustained outages (e.g. WMI service down,
+/// CUPS unreachable) - a single WMI hiccup no longer kills monitoring.
+const MAX_CONSECUTIVE_MONITOR_ERRORS: u32 = 5;
 
 /// Enum representing all available printer properties that can be monitored.
 ///
@@ -263,6 +269,7 @@ impl PrinterMonitor {
         info!("Starting printer monitoring service for: {}", printer_name);
 
         let mut previous_printer: Option<Printer> = None;
+        let mut consecutive_errors: u32 = 0;
 
         loop {
             // Check for cancellation
@@ -275,6 +282,7 @@ impl PrinterMonitor {
 
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
+                    consecutive_errors = 0;
                     info!("Checking printer: {}", current_printer.name());
                     let has_changed = previous_printer
                         .as_ref()
@@ -295,6 +303,7 @@ impl PrinterMonitor {
                     }
                 }
                 Ok(None) => {
+                    consecutive_errors = 0;
                     warn!("Printer '{}' not found", printer_name);
                     if previous_printer.is_some() {
                         // Printer was previously found but now missing
@@ -312,8 +321,18 @@ impl PrinterMonitor {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to check printer status: {}", e);
-                    return Err(e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_MONITOR_ERRORS {
+                        error!(
+                            "Printer '{}' monitoring failed after {} consecutive errors, last: {}",
+                            printer_name, consecutive_errors, e
+                        );
+                        return Err(e);
+                    }
+                    warn!(
+                        "Transient error checking printer '{}' (attempt {}/{}), will retry: {}",
+                        printer_name, consecutive_errors, MAX_CONSECUTIVE_MONITOR_ERRORS, e
+                    );
                 }
             }
 
@@ -443,6 +462,7 @@ impl PrinterMonitor {
         );
 
         let mut previous_printer: Option<Printer> = None;
+        let mut consecutive_errors: u32 = 0;
 
         loop {
             // Check for cancellation
@@ -455,6 +475,7 @@ impl PrinterMonitor {
 
             match self.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
+                    consecutive_errors = 0;
                     if let Some(ref prev) = previous_printer {
                         let changes = prev.compare_with(&current_printer);
                         if changes.has_changes() {
@@ -472,6 +493,7 @@ impl PrinterMonitor {
                     previous_printer = Some(current_printer);
                 }
                 Ok(None) => {
+                    consecutive_errors = 0;
                     warn!("Printer '{}' not found", printer_name);
                     if let Some(prev) = previous_printer.take() {
                         // Printer disappeared - create a change showing it went offline
@@ -484,8 +506,18 @@ impl PrinterMonitor {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to check printer status: {}", e);
-                    return Err(e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_MONITOR_ERRORS {
+                        error!(
+                            "Printer '{}' monitoring failed after {} consecutive errors, last: {}",
+                            printer_name, consecutive_errors, e
+                        );
+                        return Err(e);
+                    }
+                    warn!(
+                        "Transient error checking printer '{}' (attempt {}/{}), will retry: {}",
+                        printer_name, consecutive_errors, MAX_CONSECUTIVE_MONITOR_ERRORS, e
+                    );
                 }
             }
 
@@ -620,7 +652,7 @@ impl PrinterMonitor {
         F: Fn(&PrinterChanges) + Send + Sync + 'static,
     {
         use std::sync::Arc;
-        use tokio::task::JoinHandle;
+        use tokio::task::JoinSet;
 
         info!(
             "Starting concurrent monitoring of {} printers",
@@ -628,7 +660,10 @@ impl PrinterMonitor {
         );
 
         let callback = Arc::new(callback);
-        let mut tasks: Vec<JoinHandle<Result<()>>> = Vec::new();
+        // JoinSet (over Vec<JoinHandle>) so a single task failure can abort the
+        // siblings via `abort_all()`, preventing the orphaned-poller leak that
+        // happened when the caller passed no CancellationToken.
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
         let mut previous_states: HashMap<String, Option<Printer>> = HashMap::new();
 
         // Initialize previous states
@@ -646,7 +681,9 @@ impl PrinterMonitor {
             let cancel_token_clone = cancel_token.clone();
 
             // Clone the monitor (cheap Arc clone) for each task, sharing the same backend connection
-            let task = tokio::spawn(async move {
+            tasks.spawn(async move {
+                let mut consecutive_errors: u32 = 0;
+
                 loop {
                     // Check for cancellation
                     if let Some(ref token) = cancel_token_clone {
@@ -658,6 +695,7 @@ impl PrinterMonitor {
 
                     match monitor_clone.find_printer(&printer_name_clone).await {
                         Ok(Some(current_printer)) => {
+                            consecutive_errors = 0;
                             // Acquire lock to check previous state and compute changes
                             let (changes_to_report, is_initial) = {
                                 let mut states = previous_states_clone.lock().await;
@@ -695,6 +733,7 @@ impl PrinterMonitor {
                             }
                         }
                         Ok(None) => {
+                            consecutive_errors = 0;
                             warn!("Printer '{}' not found", printer_name_clone);
 
                             // Acquire lock to check if printer disappeared
@@ -725,11 +764,18 @@ impl PrinterMonitor {
                             }
                         }
                         Err(e) => {
-                            error!(
-                                "Failed to check printer '{}' status: {}",
-                                printer_name_clone, e
+                            consecutive_errors += 1;
+                            if consecutive_errors >= MAX_CONSECUTIVE_MONITOR_ERRORS {
+                                error!(
+                                    "Printer '{}' monitoring failed after {} consecutive errors, last: {}",
+                                    printer_name_clone, consecutive_errors, e
+                                );
+                                return Err(e);
+                            }
+                            warn!(
+                                "Transient error checking printer '{}' (attempt {}/{}), will retry: {}",
+                                printer_name_clone, consecutive_errors, MAX_CONSECUTIVE_MONITOR_ERRORS, e
                             );
-                            return Err(e);
                         }
                     }
 
@@ -747,23 +793,28 @@ impl PrinterMonitor {
                     }
                 }
             });
-
-            tasks.push(task);
         }
 
-        // Wait for all monitoring tasks (this will run indefinitely unless one fails)
-        for task in tasks {
-            match task.await {
+        // Process tasks as they finish; on the first real error, abort siblings
+        // and return. JoinError::is_cancelled() is expected after abort_all() so
+        // those drain silently.
+        while let Some(result) = tasks.join_next().await {
+            match result {
                 Ok(Ok(())) => {
                     info!("Monitoring task completed successfully");
                 }
                 Ok(Err(e)) => {
                     error!("Monitoring task failed: {}", e);
+                    tasks.abort_all();
                     return Err(e);
                 }
-                Err(e) => {
-                    error!("Monitoring task panicked: {}", e);
-                    return Err(crate::PrinterError::Other(format!("Task panicked: {}", e)));
+                Err(je) if je.is_cancelled() => {
+                    // Sibling aborted via abort_all() above - expected, ignore.
+                }
+                Err(je) => {
+                    error!("Monitoring task panicked: {}", je);
+                    tasks.abort_all();
+                    return Err(crate::PrinterError::Other(format!("Task panicked: {}", je)));
                 }
             }
         }

@@ -1,6 +1,36 @@
 #[cfg(windows)]
 use serde::Deserialize;
 
+// .NET PrintQueueStatus flag values used by Win32_Printer.PrinterState.
+// Defined once here so the priority chain in `PrinterState::from_u32` and the
+// description tables in `Printer::printer_state_description` stay in sync.
+// Reference: https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus
+const PRINTER_STATE_PAUSED: u32 = 1;
+const PRINTER_STATE_ERROR: u32 = 2;
+const PRINTER_STATE_PENDING_DELETION: u32 = 4;
+const PRINTER_STATE_PAPER_JAM: u32 = 8;
+const PRINTER_STATE_PAPER_OUT: u32 = 16;
+const PRINTER_STATE_MANUAL_FEED: u32 = 32;
+const PRINTER_STATE_PAPER_PROBLEM: u32 = 64;
+const PRINTER_STATE_OFFLINE: u32 = 128;
+const PRINTER_STATE_IO_ACTIVE: u32 = 256;
+const PRINTER_STATE_BUSY: u32 = 512;
+const PRINTER_STATE_PRINTING: u32 = 1024;
+const PRINTER_STATE_OUTPUT_BIN_FULL: u32 = 2048;
+const PRINTER_STATE_NOT_AVAILABLE: u32 = 4096;
+const PRINTER_STATE_WAITING: u32 = 8192;
+const PRINTER_STATE_PROCESSING: u32 = 16_384;
+const PRINTER_STATE_INITIALIZING: u32 = 32_768;
+const PRINTER_STATE_WARMING_UP: u32 = 65_536;
+const PRINTER_STATE_TONER_LOW: u32 = 131_072;
+const PRINTER_STATE_NO_TONER: u32 = 262_144;
+const PRINTER_STATE_PAGE_PUNT: u32 = 524_288;
+const PRINTER_STATE_USER_INTERVENTION_REQUIRED: u32 = 1_048_576;
+const PRINTER_STATE_OUT_OF_MEMORY: u32 = 2_097_152;
+const PRINTER_STATE_DOOR_OPEN: u32 = 4_194_304;
+const PRINTER_STATE_SERVER_UNKNOWN: u32 = 8_388_608;
+const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
+
 /// Represents a printer's status (Win32_Printer.PrinterStatus - Current/Recommended)
 ///
 /// This is the current WMI property for printer status information.
@@ -108,97 +138,78 @@ impl PrinterState {
     /// * `state` - WMI Win32_Printer.PrinterState value (actually .NET PrintQueueStatus flags)
     ///
     /// # Returns
-    /// Corresponding PrinterState enum variant for the most significant flag
+    /// Corresponding PrinterState enum variant for the most informative flag.
+    ///
+    /// Specific-cause bits (e.g. PaperJam, NoToner, DoorOpen) are checked before
+    /// the generic `Error` flag because WMI typically OR's both together; returning
+    /// the specific cause preserves information for the caller.
     #[cfg(windows)]
     pub(crate) fn from_u32(state: u32) -> Self {
-        // Handle .NET PrintQueueStatus flag values - return the most significant flag
-        // Priority order: Error conditions first, then active states, then idle states
-
         if state == 0 {
             return PrinterState::None;
         }
 
-        // Error and problem states (highest priority)
-        if state & 4194304 != 0 {
-            // DoorOpen
+        // Specific error conditions first - these typically come OR'd with the
+        // generic `Error` bit, so checking `Error` early would mask them.
+        if state & PRINTER_STATE_DOOR_OPEN != 0 {
             PrinterState::DoorOpen
-        } else if state & 2 != 0 {
-            // Error
-            PrinterState::Error
-        } else if state & 8 != 0 {
-            // PaperJam
+        } else if state & PRINTER_STATE_PAPER_JAM != 0 {
             PrinterState::PaperJam
-        } else if state & 16 != 0 {
-            // PaperOut
+        } else if state & PRINTER_STATE_PAPER_OUT != 0 {
             PrinterState::PaperOut
-        } else if state & 64 != 0 {
-            // PaperProblem
+        } else if state & PRINTER_STATE_PAPER_PROBLEM != 0 {
             PrinterState::PaperProblem
-        } else if state & 131072 != 0 {
-            // TonerLow
-            PrinterState::TonerLow
-        } else if state & 262144 != 0 {
-            // NoToner
+        } else if state & PRINTER_STATE_NO_TONER != 0 {
             PrinterState::NoToner
-        } else if state & 2097152 != 0 {
-            // OutOfMemory
+        } else if state & PRINTER_STATE_TONER_LOW != 0 {
+            PrinterState::TonerLow
+        } else if state & PRINTER_STATE_OUT_OF_MEMORY != 0 {
             PrinterState::OutOfMemory
-        } else if state & 1048576 != 0 {
-            // UserInterventionRequired
+        } else if state & PRINTER_STATE_USER_INTERVENTION_REQUIRED != 0 {
             PrinterState::UserInterventionRequired
-        } else if state & 524288 != 0 {
-            // PagePunt
+        } else if state & PRINTER_STATE_PAGE_PUNT != 0 {
             PrinterState::PagePunt
-        } else if state & 128 != 0 {
-            // Offline
+
+        // Reachability problems
+        } else if state & PRINTER_STATE_OFFLINE != 0 {
             PrinterState::Offline
-        } else if state & 4096 != 0 {
-            // NotAvailable
+        } else if state & PRINTER_STATE_NOT_AVAILABLE != 0 {
             PrinterState::NotAvailable
-        } else if state & 8388608 != 0 {
-            // ServerUnknown
+        } else if state & PRINTER_STATE_SERVER_UNKNOWN != 0 {
             PrinterState::ServerUnknown
 
+        // Generic error fallback - reached only when no specific cause is set.
+        } else if state & PRINTER_STATE_ERROR != 0 {
+            PrinterState::Error
+
         // Active processing states
-        } else if state & 1024 != 0 {
-            // Printing
+        } else if state & PRINTER_STATE_PRINTING != 0 {
             PrinterState::Printing
-        } else if state & 16384 != 0 {
-            // Processing
+        } else if state & PRINTER_STATE_PROCESSING != 0 {
             PrinterState::Processing
-        } else if state & 32768 != 0 {
-            // Initializing
+        } else if state & PRINTER_STATE_INITIALIZING != 0 {
             PrinterState::Initializing
-        } else if state & 65536 != 0 {
-            // WarmingUp
+        } else if state & PRINTER_STATE_WARMING_UP != 0 {
             PrinterState::WarmingUp
-        } else if state & 512 != 0 {
-            // Busy
+        } else if state & PRINTER_STATE_BUSY != 0 {
             PrinterState::Busy
-        } else if state & 256 != 0 {
-            // IOActive
+        } else if state & PRINTER_STATE_IO_ACTIVE != 0 {
             PrinterState::IOActive
 
         // Waiting and paused states
-        } else if state & 1 != 0 {
-            // Paused
+        } else if state & PRINTER_STATE_PAUSED != 0 {
             PrinterState::Paused
-        } else if state & 8192 != 0 {
-            // Waiting
+        } else if state & PRINTER_STATE_WAITING != 0 {
             PrinterState::Waiting
-        } else if state & 32 != 0 {
-            // ManualFeed
+        } else if state & PRINTER_STATE_MANUAL_FEED != 0 {
             PrinterState::ManualFeed
-        } else if state & 2048 != 0 {
-            // OutputBinFull
+        } else if state & PRINTER_STATE_OUTPUT_BIN_FULL != 0 {
             PrinterState::OutputBinFull
 
         // Maintenance and special states
-        } else if state & 16777216 != 0 {
-            // PowerSave
+        } else if state & PRINTER_STATE_POWER_SAVE != 0 {
             PrinterState::PowerSave
-        } else if state & 4 != 0 {
-            // PendingDeletion
+        } else if state & PRINTER_STATE_PENDING_DELETION != 0 {
             PrinterState::PendingDeletion
         } else {
             PrinterState::StatusUnknown
@@ -241,21 +252,41 @@ impl PrinterState {
         }
     }
 
-    /// Converts PrinterState to equivalent PrinterStatus when possible
+    /// Converts PrinterState to equivalent PrinterStatus when possible.
+    ///
+    /// PrinterStatus (values 1-7) only covers operational states - it has no
+    /// dedicated error variants, so error-class PrinterState values are mapped
+    /// to `StoppedPrinting` (printer halted due to a problem) rather than the
+    /// generic `Other`. Callers should inspect [`Printer::error_state`] for the
+    /// specific cause (PaperJam, NoToner, etc.).
     ///
     /// # Returns
-    /// PrinterStatus equivalent or StatusUnknown if no mapping exists
+    /// PrinterStatus equivalent or StatusUnknown if no meaningful mapping exists
     pub fn to_printer_status(&self) -> PrinterStatus {
         match self {
             PrinterState::None => PrinterStatus::Idle,
             PrinterState::Printing => PrinterStatus::Printing,
             PrinterState::WarmingUp => PrinterStatus::Warmup,
-            PrinterState::Offline => PrinterStatus::Offline,
-            PrinterState::Paused => PrinterStatus::StoppedPrinting,
-            PrinterState::Error
+
+            // Unreachable / disconnected -> Offline
+            PrinterState::Offline | PrinterState::NotAvailable | PrinterState::ServerUnknown => {
+                PrinterStatus::Offline
+            }
+
+            // Stuck due to a problem the user must resolve - StoppedPrinting
+            // matches the WMI semantics better than collapsing to `Other`,
+            // which is itself a documented WMI value meaning "something else".
+            PrinterState::Paused
+            | PrinterState::Error
             | PrinterState::PaperJam
             | PrinterState::PaperOut
-            | PrinterState::DoorOpen => PrinterStatus::Other, // Error conditions
+            | PrinterState::PaperProblem
+            | PrinterState::DoorOpen
+            | PrinterState::OutOfMemory
+            | PrinterState::NoToner
+            | PrinterState::UserInterventionRequired
+            | PrinterState::PagePunt => PrinterStatus::StoppedPrinting,
+
             _ => PrinterStatus::StatusUnknown,
         }
     }
@@ -816,6 +847,13 @@ impl Printer {
     }
 
     /// Returns human-readable description of PrinterState code (obsolete property)
+    ///
+    /// Win32_Printer.PrinterState is documented by Microsoft as a uint32 with
+    /// values 0-25 (the "obsolete" table). On modern Windows the same property
+    /// is also observed returning .NET PrintQueueStatus bitwise flag values.
+    /// This function recognises both: the documented 0-25 lookup wins for
+    /// small values, and flag interpretation handles the rest.
+    /// Reference: <https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer>
     pub fn printer_state_description(&self) -> Option<&'static str> {
         self.printer_state_code.map(|code| match code {
             // Documented Win32_Printer.PrinterState values (0-25)
@@ -845,34 +883,49 @@ impl Printer {
             23 => "Door Open",
             24 => "Server Unknown",
             25 => "Power Save",
-            128 => "Offline (Legacy)",
 
-            // Real-world bitwise flag values
-            1024 => "Printing (Flag)",
-            16384 => "Initialization (Flag)",
-            2048 => "Processing (Flag)",
-            4096 => "Busy (Flag)",
-            8192 => "Warming Up (Flag)",
-            32768 => "Paper Out (Flag)",
-            65536 => "Error (Flag)",
+            // .NET PrintQueueStatus single-flag values seen in the wild on
+            // modern Windows. All of these are > 25 so there's no clash with
+            // the documented table above.
+            PRINTER_STATE_OFFLINE => "Offline (Flag)",
+            PRINTER_STATE_PRINTING => "Printing (Flag)",
+            PRINTER_STATE_OUTPUT_BIN_FULL => "Output Bin Full (Flag)",
+            PRINTER_STATE_NOT_AVAILABLE => "Not Available (Flag)",
+            PRINTER_STATE_WAITING => "Waiting (Flag)",
+            PRINTER_STATE_PROCESSING => "Processing (Flag)",
+            PRINTER_STATE_INITIALIZING => "Initialization (Flag)",
+            PRINTER_STATE_WARMING_UP => "Warming Up (Flag)",
+            PRINTER_STATE_TONER_LOW => "Toner Low (Flag)",
+            PRINTER_STATE_NO_TONER => "No Toner (Flag)",
+            PRINTER_STATE_PAGE_PUNT => "Page Punt (Flag)",
+            PRINTER_STATE_USER_INTERVENTION_REQUIRED => "User Intervention Required (Flag)",
+            PRINTER_STATE_OUT_OF_MEMORY => "Out of Memory (Flag)",
+            PRINTER_STATE_DOOR_OPEN => "Door Open (Flag)",
+            PRINTER_STATE_SERVER_UNKNOWN => "Server Unknown (Flag)",
+            PRINTER_STATE_POWER_SAVE => "Power Save (Flag)",
 
-            // For unknown values, try to interpret flags
+            // Combined bitmask - report the highest-priority flag that's set,
+            // mirroring `PrinterState::from_u32`.
             _ => {
-                if code & 1024 != 0 {
-                    "Printing (Multi-flag)"
-                } else if code & 16384 != 0 {
-                    "Initialization (Multi-flag)"
-                } else if code & 2048 != 0 {
-                    "Processing (Multi-flag)"
-                } else if code & 4096 != 0 {
-                    "Busy (Multi-flag)"
-                } else if code & 8192 != 0 {
-                    "Warming Up (Multi-flag)"
-                } else if code & 32768 != 0 {
-                    "Paper Out (Multi-flag)"
-                } else if code & 65536 != 0 {
+                if code & PRINTER_STATE_DOOR_OPEN != 0 {
+                    "Door Open (Multi-flag)"
+                } else if code & PRINTER_STATE_NO_TONER != 0 {
+                    "No Toner (Multi-flag)"
+                } else if code & PRINTER_STATE_OUT_OF_MEMORY != 0 {
+                    "Out of Memory (Multi-flag)"
+                } else if code & PRINTER_STATE_OFFLINE != 0 {
+                    "Offline (Multi-flag)"
+                } else if code & PRINTER_STATE_ERROR != 0 {
                     "Error (Multi-flag)"
-                } else if code & 1 != 0 {
+                } else if code & PRINTER_STATE_PRINTING != 0 {
+                    "Printing (Multi-flag)"
+                } else if code & PRINTER_STATE_PROCESSING != 0 {
+                    "Processing (Multi-flag)"
+                } else if code & PRINTER_STATE_INITIALIZING != 0 {
+                    "Initializing (Multi-flag)"
+                } else if code & PRINTER_STATE_WARMING_UP != 0 {
+                    "Warming Up (Multi-flag)"
+                } else if code & PRINTER_STATE_PAUSED != 0 {
                     "Paused (Multi-flag)"
                 } else {
                     "Unknown State Code"
@@ -1144,9 +1197,38 @@ mod tests {
             PrinterState::Printing.to_printer_status(),
             PrinterStatus::Printing
         );
+
+        // Error-class states now map to StoppedPrinting (not the generic `Other`
+        // which is a real WMI value meaning "something else").
         assert_eq!(
             PrinterState::PaperJam.to_printer_status(),
-            PrinterStatus::Other
+            PrinterStatus::StoppedPrinting
+        );
+        assert_eq!(
+            PrinterState::DoorOpen.to_printer_status(),
+            PrinterStatus::StoppedPrinting
+        );
+        assert_eq!(
+            PrinterState::NoToner.to_printer_status(),
+            PrinterStatus::StoppedPrinting
+        );
+        assert_eq!(
+            PrinterState::Paused.to_printer_status(),
+            PrinterStatus::StoppedPrinting
+        );
+
+        // Reachability states all funnel to Offline.
+        assert_eq!(
+            PrinterState::Offline.to_printer_status(),
+            PrinterStatus::Offline
+        );
+        assert_eq!(
+            PrinterState::NotAvailable.to_printer_status(),
+            PrinterStatus::Offline
+        );
+        assert_eq!(
+            PrinterState::ServerUnknown.to_printer_status(),
+            PrinterStatus::Offline
         );
     }
 
@@ -1395,11 +1477,26 @@ mod tests {
         assert_eq!(PrinterState::from_u32(1024), PrinterState::Printing);
         assert_eq!(PrinterState::from_u32(16384), PrinterState::Processing);
 
-        // Test priority: Error states take precedence
-        assert_eq!(PrinterState::from_u32(2 | 1024), PrinterState::Error); // Error + Printing -> Error
+        // Generic Error still wins over operational states when no specific
+        // cause is set - this preserves "something is wrong" signalling.
+        assert_eq!(PrinterState::from_u32(2 | 1024), PrinterState::Error);
 
-        // Test priority: DoorOpen is highest priority error
+        // DoorOpen is the highest-priority specific error.
         assert_eq!(PrinterState::from_u32(4194304 | 2), PrinterState::DoorOpen);
+
+        // B1 regression guard: specific error bits MUST win over the generic
+        // `Error` bit, because WMI typically OR's them together and the
+        // specific cause is more informative than the umbrella label.
+        assert_eq!(PrinterState::from_u32(2 | 8), PrinterState::PaperJam);
+        assert_eq!(PrinterState::from_u32(2 | 16), PrinterState::PaperOut);
+        assert_eq!(PrinterState::from_u32(2 | 262_144), PrinterState::NoToner);
+        assert_eq!(
+            PrinterState::from_u32(2 | 2_097_152),
+            PrinterState::OutOfMemory
+        );
+
+        // Offline/unreachable preferred over generic Error too.
+        assert_eq!(PrinterState::from_u32(2 | 128), PrinterState::Offline);
     }
 
     #[cfg(windows)]
