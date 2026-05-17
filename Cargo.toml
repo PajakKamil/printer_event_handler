@@ -66,5 +66,5 @@ wmi = "0.18.4"
 # drives the end-to-end change-detection tests without touching the OS.
 async-trait = "0.1.89"
 # Used by the serde-roundtrip tests gated on `feature = "serde"`.
-serde_json = "1.0"
+serde_json = "1.0.149"
 
