@@ -1,6 +1,6 @@
 #[cfg(windows)]
 use crate::PrinterError;
-use crate::{Printer, Result};
+use crate::{Job, Printer, Result};
 use async_trait::async_trait;
 
 /// Trait for platform-specific printer backend implementations
@@ -16,31 +16,42 @@ pub trait PrinterBackend: Send + Sync {
 
     /// Find a printer by name (case-insensitive)
     async fn find_printer(&self, name: &str) -> Result<Option<Printer>>;
+
+    /// List print jobs, optionally filtered to a single printer.
+    ///
+    /// Default implementation returns `Ok(vec![])` so existing backend
+    /// implementations keep compiling without breaking changes. Backends that
+    /// can enumerate jobs should override this.
+    ///
+    /// When `printer_name` is `Some(name)`, only jobs owned by that printer
+    /// should be returned. `None` returns jobs from all printers.
+    async fn list_jobs(&self, _printer_name: Option<&str>) -> Result<Vec<Job>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Windows backend using WMI
 #[cfg(windows)]
 pub struct WindowsBackend;
 
-/// Runs the Win32_Printer query reusing a thread-local `WMIConnection`.
-///
-/// `wmi::WMIConnection` is `!Send + !Sync` because it holds COM state tied to
-/// the thread that created it, so the previous code paid the COM init cost on
-/// every `list_printers` call. Storing the connection in a `thread_local!` lets
-/// each tokio blocking-pool thread initialise it once and reuse it for the
-/// lifetime of the thread. On query failure the cache is cleared so the next
-/// call rebuilds the connection - covers WMI service restarts and stale
-/// handles.
+/// Runs a parameterless WQL query (e.g. `SELECT * FROM Win32_Printer`) reusing
+/// a thread-local [`wmi::WMIConnection`]. The connection is `!Send + !Sync`
+/// because it holds COM state tied to its creator thread, so each tokio
+/// blocking-pool thread initialises it once and reuses it for the thread's
+/// lifetime. On query failure the cached connection is dropped so the next
+/// call rebuilds it - covers WMI service restarts and stale handles.
 #[cfg(windows)]
-fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
-    use crate::printer::Win32Printer;
+fn run_cached_wmi_query<T>(wql: &str) -> Result<Vec<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
     use std::cell::RefCell;
 
     thread_local! {
         static WMI_CONNECTION: RefCell<Option<wmi::WMIConnection>> = const { RefCell::new(None) };
     }
 
-    WMI_CONNECTION.with(|cell| -> Result<Vec<Win32Printer>> {
+    WMI_CONNECTION.with(|cell| -> Result<Vec<T>> {
         // Lazy init: scope the mutable borrow so it's released before the query.
         {
             let mut slot = cell.borrow_mut();
@@ -49,15 +60,14 @@ fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
             }
         }
 
-        // SELECT * because WQL treats "Default" as a reserved keyword.
         let query_result = {
             let slot = cell.borrow();
             let conn = slot.as_ref().expect("connection initialised above");
-            conn.raw_query::<Win32Printer>("SELECT * FROM Win32_Printer")
+            conn.raw_query::<T>(wql)
         };
 
         match query_result {
-            Ok(printers) => Ok(printers),
+            Ok(rows) => Ok(rows),
             Err(e) => {
                 // Drop the (possibly stale) cached connection so the next call
                 // can recover from WMI service restarts or expired sessions.
@@ -66,6 +76,17 @@ fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
             }
         }
     })
+}
+
+/// `SELECT *` because WQL treats `Default` as a reserved keyword.
+#[cfg(windows)]
+fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
+    run_cached_wmi_query::<crate::printer::Win32Printer>("SELECT * FROM Win32_Printer")
+}
+
+#[cfg(windows)]
+fn query_win32_print_jobs_cached() -> Result<Vec<crate::printer::Win32PrintJob>> {
+    run_cached_wmi_query::<crate::printer::Win32PrintJob>("SELECT * FROM Win32_PrintJob")
 }
 
 #[cfg(windows)]
@@ -101,6 +122,33 @@ impl PrinterBackend for WindowsBackend {
         }
 
         Ok(None)
+    }
+
+    async fn list_jobs(&self, printer_name: Option<&str>) -> Result<Vec<Job>> {
+        use crate::logging::pe_info as info;
+
+        info!("Querying print job information via WMI...");
+
+        let raw_jobs = tokio::task::spawn_blocking(query_win32_print_jobs_cached)
+            .await
+            .map_err(|e| PrinterError::Other(format!("Failed to execute WMI query: {}", e)))??;
+
+        // Filter client-side. WQL supports `WHERE Name = '...'` but
+        // `Win32_PrintJob.PrinterName` returns the host printer name with the
+        // job id appended (e.g. "HP LaserJet, 42"), so doing the filter in
+        // Rust keeps the query simple and the matching robust.
+        let jobs: Vec<Job> = raw_jobs
+            .into_iter()
+            .map(Job::from)
+            .filter(|job| match printer_name {
+                Some(target) => job
+                    .printer_name()
+                    .map(|name| name.eq_ignore_ascii_case(target))
+                    .unwrap_or(false),
+                None => true,
+            })
+            .collect();
+        Ok(jobs)
     }
 }
 

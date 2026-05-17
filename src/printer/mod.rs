@@ -8,12 +8,14 @@
 
 mod change;
 mod error_state;
+mod job;
 mod model;
 mod state;
 mod status;
 
 pub use change::{PrinterChanges, PropertyChange};
 pub use error_state::ErrorState;
+pub use job::{Job, JobStatus};
 pub use model::Printer;
 pub use state::PrinterState;
 pub use status::PrinterStatus;
@@ -25,6 +27,8 @@ pub use model::WmiStatusCodes;
 // via `crate::printer::Win32Printer` exactly as before the split.
 #[cfg(windows)]
 pub(crate) use model::Win32Printer;
+#[cfg(windows)]
+pub(crate) use job::Win32PrintJob;
 
 #[cfg(test)]
 mod tests {

@@ -46,10 +46,17 @@ serde = []
 # dual-emit. Both backends accept the same format-string call sites, so
 # enabling this is a drop-in replacement.
 tracing = ["dep:tracing"]
+# Enables an event-driven monitoring path on Windows backed by WMI's
+# `__InstanceModificationEvent` notifications (via `wmi::WMIConnection`'s
+# `raw_notification`). Opt-in via `MonitorBuilder::with_events(true)`. The
+# polling path remains the default. Windows-only - on other platforms the
+# feature is a no-op and the builder falls back to polling.
+events = []
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.52.3", features = ["rt", "macros", "time", "process", "fs", "sync"] }
+tokio-stream = "0.1"
 tokio-util = "0.7.18"
 log = "0.4.29"
 env_logger = "0.11.10"

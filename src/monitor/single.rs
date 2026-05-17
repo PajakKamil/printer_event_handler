@@ -125,6 +125,30 @@ impl PrinterMonitor {
         }
     }
 
+    /// Lists print jobs across all printers (`printer_name = None`) or for a
+    /// single printer (`Some(name)`).
+    ///
+    /// Backends that cannot enumerate jobs return `Ok(vec![])` - this is the
+    /// case for the Linux/CUPS backend in 1.5.0; first-class CUPS support is
+    /// queued for a later release. The Windows backend pulls from WMI's
+    /// `Win32_PrintJob`.
+    ///
+    /// The optional [`CancellationToken`] is raced against the backend query;
+    /// when fired the call returns [`crate::PrinterError::Cancelled`].
+    pub async fn list_jobs(
+        &self,
+        printer_name: Option<&str>,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Vec<crate::Job>> {
+        match cancel_token {
+            Some(token) => tokio::select! {
+                result = self.backend.list_jobs(printer_name) => result,
+                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+            },
+            None => self.backend.list_jobs(printer_name).await,
+        }
+    }
+
     /// Continuously monitors a specific printer for status changes.
     ///
     /// This function runs indefinitely, polling the specified printer every `interval_ms`

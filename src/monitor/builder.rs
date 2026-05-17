@@ -55,12 +55,20 @@ const DEFAULT_INTERVAL_MS: u64 = 60_000;
 /// # }
 /// ```
 pub struct MonitorBuilder<'a> {
-    monitor: &'a PrinterMonitor,
-    printer_name: String,
-    interval_ms: u64,
-    cancel_token: Option<CancellationToken>,
-    wait_for_appearance: bool,
-    property_filter: Option<MonitorableProperty>,
+    // Fields are `pub(super)` so the sibling `stream` module can read them
+    // when implementing the `Stream`-returning terminal methods without
+    // duplicating the option-collecting boilerplate. They stay non-`pub`
+    // because the public surface is the chainable setter API only.
+    pub(super) monitor: &'a PrinterMonitor,
+    pub(super) printer_name: String,
+    pub(super) interval_ms: u64,
+    pub(super) cancel_token: Option<CancellationToken>,
+    pub(super) wait_for_appearance: bool,
+    pub(super) property_filter: Option<MonitorableProperty>,
+    /// Opt-in flag for the event-driven path. Honoured only when the crate
+    /// is built with the `events` feature on Windows; on other targets the
+    /// builder silently falls back to polling (with a one-shot warn log).
+    pub(super) use_events: bool,
 }
 
 impl<'a> MonitorBuilder<'a> {
@@ -72,6 +80,7 @@ impl<'a> MonitorBuilder<'a> {
             cancel_token: None,
             wait_for_appearance: true,
             property_filter: None,
+            use_events: false,
         }
     }
 
@@ -104,6 +113,22 @@ impl<'a> MonitorBuilder<'a> {
     /// [`Self::run_property`] - the method errors if no filter was set.
     pub fn filter_property(mut self, property: MonitorableProperty) -> Self {
         self.property_filter = Some(property);
+        self
+    }
+
+    /// Opt in to the event-driven monitoring path.
+    ///
+    /// Effective only when the crate is built with the `events` cargo feature
+    /// on Windows. In that configuration, [`Self::run_changes_stream`] uses a
+    /// WMI `__InstanceModificationEvent` subscription instead of polling, so
+    /// the printer's state changes propagate to the stream as soon as WMI
+    /// reports them (typically within ~1 second).
+    ///
+    /// On other targets or without the feature, this method is accepted
+    /// silently and the builder falls back to polling. Callers can therefore
+    /// set it unconditionally without breaking cross-platform builds.
+    pub fn with_events(mut self, enable: bool) -> Self {
+        self.use_events = enable;
         self
     }
 

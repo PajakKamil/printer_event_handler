@@ -133,7 +133,8 @@ pub mod printer;
 pub use error::PrinterError;
 pub use monitor::{MonitorBuilder, MonitorableProperty, PrinterMonitor};
 pub use printer::{
-    ErrorState, Printer, PrinterChanges, PrinterState, PrinterStatus, PropertyChange,
+    ErrorState, Job, JobStatus, Printer, PrinterChanges, PrinterState, PrinterStatus,
+    PropertyChange,
 };
 
 // Re-export CancellationToken for convenient access

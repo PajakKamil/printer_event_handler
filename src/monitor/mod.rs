@@ -14,9 +14,12 @@ use crate::backend::{PrinterBackend, create_backend};
 use crate::logging::pe_info as info;
 
 mod builder;
+#[cfg(all(windows, feature = "events"))]
+mod events;
 mod presence;
 mod property;
 mod single;
+mod stream;
 mod summary;
 // `multi` re-uses `presence::PresenceTracker`; it's declared `pub(super)`
 // inside that module so this `mod multi` (sibling) can name it.

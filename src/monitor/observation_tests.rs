@@ -315,3 +315,72 @@ async fn monitor_printer_changes_initial_state_is_silent() {
         "initial state must be captured silently"
     );
 }
+
+#[tokio::test]
+async fn run_changes_stream_yields_detected_changes() {
+    // The stream variant must surface the same change events the callback
+    // variant does. Sequence: Idle -> Idle -> Printing -> Printing, so the
+    // monitor should observe one Status change.
+    use tokio_stream::StreamExt;
+
+    let idle = make_printer("Obs", PrinterStatus::Idle, ErrorState::NoError, false);
+    let printing = make_printer("Obs", PrinterStatus::Printing, ErrorState::NoError, false);
+    let backend = ScriptedBackend::new(vec![
+        Some(idle.clone()),
+        Some(idle),
+        Some(printing.clone()),
+        Some(printing),
+    ]);
+    let monitor = monitor_with(backend);
+    let cancel = CancellationToken::new();
+
+    let mut stream = monitor
+        .monitor("Obs")
+        .interval_ms(TEST_POLL_INTERVAL_MS)
+        .cancel_token(cancel.clone())
+        .run_changes_stream();
+
+    // Race the stream's first yield against a short timeout; cancel so the
+    // background monitor task exits whether or not we got a value.
+    let first = timeout(Duration::from_millis(TEST_RUN_DURATION_MS), stream.next()).await;
+    cancel.cancel();
+
+    let changes = first
+        .expect("stream must yield within run window")
+        .expect("stream must not end before yielding the Status change");
+    assert!(
+        changes.has_property_change("Status"),
+        "expected Status change, got {:?}",
+        changes
+    );
+}
+
+#[tokio::test]
+async fn run_property_stream_filters_to_selected_property() {
+    // Run a single-property stream filtering on Status; assert it sees the
+    // Status mutation but not unrelated ErrorState changes.
+    use tokio_stream::StreamExt;
+
+    let a = make_printer("Obs", PrinterStatus::Idle, ErrorState::NoError, false);
+    let b = make_printer("Obs", PrinterStatus::Printing, ErrorState::Jammed, false);
+    let backend =
+        ScriptedBackend::new(vec![Some(a.clone()), Some(a), Some(b.clone()), Some(b)]);
+    let monitor = monitor_with(backend);
+    let cancel = CancellationToken::new();
+
+    let mut stream = monitor
+        .monitor("Obs")
+        .interval_ms(TEST_POLL_INTERVAL_MS)
+        .cancel_token(cancel.clone())
+        .filter_property(MonitorableProperty::Status)
+        .run_property_stream()
+        .expect("filter_property was set");
+
+    let first = timeout(Duration::from_millis(TEST_RUN_DURATION_MS), stream.next()).await;
+    cancel.cancel();
+
+    let change = first
+        .expect("stream must yield within run window")
+        .expect("stream must yield the filtered Status change");
+    assert_eq!(change.property_name(), "Status");
+}
