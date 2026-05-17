@@ -76,6 +76,18 @@
 //! - **Detailed status information** - PrinterStatus (current) + PrinterState (.NET flags) and 11 error states
 //! - **Platform-specific backends** with unified API
 //!
+//! ## Cargo features
+//!
+//! - `rt-multi-thread` *(default)* - enables tokio's multi-threaded runtime. The
+//!   library itself only requires tokio's `rt` feature for `tokio::spawn`. The
+//!   multi-threaded runtime is on by default so that `#[tokio::main]` works out
+//!   of the box. Consumers who prefer the `current_thread` runtime (smaller
+//!   binary, embedded use) can opt out with:
+//!
+//!   ```toml
+//!   printer_event_handler = { version = "1.5", default-features = false }
+//!   ```
+//!
 //! ## Example
 //!
 //! ```rust,no_run

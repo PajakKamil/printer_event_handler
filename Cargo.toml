@@ -14,14 +14,29 @@ autoexamples = false
 [[bin]]
 name = "printer_monitor"
 path = "src/main.rs"
+# The CLI uses `#[tokio::main]` (multi-threaded by default), so it cannot be
+# built when the `rt-multi-thread` cargo feature is disabled. Library-only
+# consumers (`default-features = false`) simply skip the bin target.
+required-features = ["rt-multi-thread"]
 
 [lib]
 name = "printer_event_handler"
 path = "src/lib.rs"
 
+# Cargo features:
+# - `rt-multi-thread` (default): enables tokio's multi-threaded runtime.
+#   The library itself only needs the `rt` feature for `tokio::spawn`. The
+#   multi-threaded runtime is enabled by default to preserve the existing
+#   out-of-the-box behavior and to power the `printer_monitor` binary's
+#   `#[tokio::main]`. Library consumers who want a smaller runtime (e.g.
+#   `current_thread`) can opt out with `default-features = false`.
+[features]
+default = ["rt-multi-thread"]
+rt-multi-thread = ["tokio/rt-multi-thread"]
+
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "process", "fs", "sync"] }
+tokio = { version = "1.52.3", features = ["rt", "macros", "time", "process", "fs", "sync"] }
 tokio-util = "0.7.18"
 log = "0.4.29"
 env_logger = "0.11.10"
