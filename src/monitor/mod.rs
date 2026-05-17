@@ -73,6 +73,28 @@ impl PrinterMonitor {
             backend: Arc::from(backend),
         })
     }
+
+    /// Constructs a monitor around a caller-supplied backend.
+    ///
+    /// Intended for tests and advanced users who need to substitute the
+    /// platform backend (e.g. recording, fault injection, scripted
+    /// responses for end-to-end change-detection tests). Production code
+    /// should use [`PrinterMonitor::new`] instead - it auto-selects the
+    /// real WMI/CUPS backend for the current platform.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use std::sync::Arc;
+    /// use printer_event_handler::PrinterMonitor;
+    /// use printer_event_handler::backend::PrinterBackend;
+    ///
+    /// fn make_monitor(backend: Arc<dyn PrinterBackend>) -> PrinterMonitor {
+    ///     PrinterMonitor::from_backend(backend)
+    /// }
+    /// ```
+    pub fn from_backend(backend: Arc<dyn PrinterBackend>) -> Self {
+        Self { backend }
+    }
 }
 
 #[cfg(test)]

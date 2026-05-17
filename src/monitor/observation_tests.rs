@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use crate::backend::PrinterBackend;
 use crate::{ErrorState, Printer, PrinterChanges, PrinterStatus, PropertyChange};
 
-use super::property::MonitorableProperty;
 use super::PrinterMonitor;
+use super::property::MonitorableProperty;
 
 /// Poll interval used by the scripted-backend tests. Tight enough that
 /// the tests finish quickly, loose enough that the monitor loop has
@@ -43,7 +43,10 @@ struct ScriptedBackend {
 
 impl ScriptedBackend {
     fn new(states: Vec<Option<Printer>>) -> Self {
-        assert!(!states.is_empty(), "ScriptedBackend needs at least one state");
+        assert!(
+            !states.is_empty(),
+            "ScriptedBackend needs at least one state"
+        );
         Self {
             states,
             cursor: AtomicUsize::new(0),
@@ -157,13 +160,8 @@ async fn callback_fires_on_real_status_change() {
 async fn callback_fires_on_disappearance() {
     // Present -> absent. Library synthesises IsOffline:false→true.
     let present = make_printer("Obs", PrinterStatus::Idle, ErrorState::NoError, false);
-    let backend = ScriptedBackend::new(vec![
-        Some(present.clone()),
-        Some(present),
-        None,
-        None,
-        None,
-    ]);
+    let backend =
+        ScriptedBackend::new(vec![Some(present.clone()), Some(present), None, None, None]);
 
     let changes = collect_changes(backend, "Obs").await;
     let saw_disappearance = changes.iter().any(|c| {
@@ -260,12 +258,8 @@ async fn monitor_property_filters_to_selected_property() {
         "IsOffline subscriber must not fire for Status/ErrorState-only changes"
     );
 
-    let backend_status = ScriptedBackend::new(vec![
-        Some(a.clone()),
-        Some(a),
-        Some(b.clone()),
-        Some(b),
-    ]);
+    let backend_status =
+        ScriptedBackend::new(vec![Some(a.clone()), Some(a), Some(b.clone()), Some(b)]);
     let monitor_status = monitor_with(backend_status);
     let status_hits: Arc<StdMutex<usize>> = Arc::new(StdMutex::new(0));
     let status_hits_clone = Arc::clone(&status_hits);
@@ -307,12 +301,9 @@ async fn monitor_printer_changes_initial_state_is_silent() {
     let cancel_clone = cancel.clone();
     let handle = tokio::spawn(async move {
         monitor
-            .monitor_printer_changes(
-                "Obs",
-                TEST_POLL_INTERVAL_MS,
-                Some(cancel_clone),
-                move |c| captured_clone.lock().unwrap().push(c.clone()),
-            )
+            .monitor_printer_changes("Obs", TEST_POLL_INTERVAL_MS, Some(cancel_clone), move |c| {
+                captured_clone.lock().unwrap().push(c.clone())
+            })
             .await
     });
     tokio::time::sleep(Duration::from_millis(TEST_RUN_DURATION_MS)).await;

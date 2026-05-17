@@ -104,7 +104,7 @@
 //!     }
 //!     
 //!     // Monitor specific property changes with type safety
-//!     monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
+//!     monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, None, |change| {
 //!         println!("Offline status changed: {}", change.description());
 //!     }).await?;
 //!     

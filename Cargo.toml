@@ -31,3 +31,9 @@ async-trait = "0.1.89"
 [target.'cfg(windows)'.dependencies]
 wmi = "0.18.4"
 
+[dev-dependencies]
+# Required by tests/integration_real_events.rs to implement the public
+# `PrinterBackend` trait (`#[async_trait]`) for the scripted backend that
+# drives the end-to-end change-detection tests without touching the OS.
+async-trait = "0.1.89"
+

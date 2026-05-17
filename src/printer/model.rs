@@ -9,8 +9,8 @@ use super::status::PrinterStatus;
 #[cfg(windows)]
 use super::state::{
     PRINTER_STATE_DOOR_OPEN, PRINTER_STATE_ERROR, PRINTER_STATE_INITIALIZING,
-    PRINTER_STATE_NOT_AVAILABLE, PRINTER_STATE_NO_TONER, PRINTER_STATE_OFFLINE,
-    PRINTER_STATE_OUTPUT_BIN_FULL, PRINTER_STATE_OUT_OF_MEMORY, PRINTER_STATE_PAGE_PUNT,
+    PRINTER_STATE_NO_TONER, PRINTER_STATE_NOT_AVAILABLE, PRINTER_STATE_OFFLINE,
+    PRINTER_STATE_OUT_OF_MEMORY, PRINTER_STATE_OUTPUT_BIN_FULL, PRINTER_STATE_PAGE_PUNT,
     PRINTER_STATE_PAUSED, PRINTER_STATE_POWER_SAVE, PRINTER_STATE_PRINTING,
     PRINTER_STATE_PROCESSING, PRINTER_STATE_SERVER_UNKNOWN, PRINTER_STATE_TONER_LOW,
     PRINTER_STATE_USER_INTERVENTION_REQUIRED, PRINTER_STATE_WAITING, PRINTER_STATE_WARMING_UP,
@@ -769,10 +769,7 @@ mod tests {
 
         let changes = a.compare_with(&b);
         assert_eq!(changes.change_count(), 1);
-        assert!(matches!(
-            changes.changes[0],
-            PropertyChange::Name { .. }
-        ));
+        assert!(matches!(changes.changes[0], PropertyChange::Name { .. }));
     }
 
     #[test]
@@ -832,7 +829,10 @@ mod tests {
         assert_eq!(changes.change_count(), 1);
         assert!(matches!(
             changes.changes[0],
-            PropertyChange::IsOffline { old: false, new: true }
+            PropertyChange::IsOffline {
+                old: false,
+                new: true
+            }
         ));
     }
 
