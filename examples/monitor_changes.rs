@@ -1,7 +1,9 @@
 //! Printer Status Change Monitoring Example
 //!
-//! This example demonstrates how to monitor a specific printer for status changes
-//! and display detailed WMI information when changes occur.
+//! Demonstrates the 2.0 [`MonitorBuilder`] fluent surface - the recommended
+//! replacement for the long positional `monitor_printer(...)` form. The
+//! callback receives `(current, previous)` snapshots so we can diff each WMI
+//! field individually.
 //!
 //! Run with: cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer Name"
 //! Or:       cargo run --manifest-path examples/Cargo.toml --bin monitor_changes
@@ -9,6 +11,11 @@
 
 use printer_event_handler::{PrinterError, PrinterMonitor};
 use std::env;
+
+/// Poll cadence for the example. 1 s is tighter than production code typically
+/// wants - it's chosen here so the screen updates feel responsive while you
+/// toggle the printer state manually. Pull from a config in real apps.
+const MONITOR_INTERVAL_MS: u64 = 1_000;
 
 #[tokio::main]
 async fn main() -> Result<(), PrinterError> {
@@ -27,7 +34,7 @@ async fn main() -> Result<(), PrinterError> {
 
     let target_printer_name = if printer_name.is_empty() {
         // Find first available printer
-        let printers = monitor.list_printers().await?;
+        let printers = monitor.list_printers_cancellable(None).await?;
         if printers.is_empty() {
             println!("No printers found on this system.");
             return Ok(());
@@ -39,19 +46,34 @@ async fn main() -> Result<(), PrinterError> {
         printer_name
     };
 
-    // Verify printer exists
-    if monitor.find_printer(&target_printer_name).await?.is_none() {
+    // Verify printer exists up front. `wait_for_appearance(false)` below would
+    // surface this as `PrinterError::PrinterNotFound` on the first poll; we do
+    // it eagerly here so we can print a friendlier message.
+    if monitor
+        .find_printer_cancellable(&target_printer_name, None)
+        .await?
+        .is_none()
+    {
         println!("Printer '{}' not found!", target_printer_name);
         return Ok(());
     }
 
     println!("Starting printer monitoring...");
-    println!("   Checking every 1 second for changes");
+    println!(
+        "   Checking every {} ms for changes",
+        MONITOR_INTERVAL_MS
+    );
     println!("   Press Ctrl+C to stop\n");
 
-    // Monitor printer with detailed change reporting
+    // MonitorBuilder is the 2.0 entry point. `.run_printer(callback)` mirrors
+    // the old `monitor_printer` (current + previous snapshot), `.run_changes`
+    // gives you a `PrinterChanges` diff, and `.run_property` filters to a
+    // single field. We use `.run_printer` here because the example diffs many
+    // WMI fields side-by-side.
     monitor
-        .monitor_printer(&target_printer_name, 1000, None, |current, previous| {
+        .monitor(&target_printer_name)
+        .interval_ms(MONITOR_INTERVAL_MS)
+        .run_printer(|current, previous| {
             let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
             if let Some(prev) = previous {
                 if prev != current {

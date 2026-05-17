@@ -68,7 +68,7 @@ async fn initialize_monitor() -> Result<PrinterMonitor, PrinterError> {
 
 /// Safely get printers with comprehensive error handling
 async fn get_printers_safely(monitor: &PrinterMonitor) -> Result<usize, PrinterError> {
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     // Validate printer data
     for printer in &printers {
@@ -113,7 +113,7 @@ async fn retry_operation() -> Result<(), PrinterError> {
 /// Simulate an operation that might fail
 async fn attempt_operation() -> Result<String, PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         return Err(PrinterError::Other("No printers available".to_string()));
@@ -129,7 +129,7 @@ async fn graceful_printer_analysis() {
             println!("   Monitor initialized");
 
             // Try to get detailed printer information, fall back to basic info
-            match monitor.list_printers().await {
+            match monitor.list_printers_cancellable(None).await {
                 Ok(printers) => {
                     println!("   Analyzing {} printers...", printers.len());
 
@@ -183,7 +183,10 @@ async fn handle_specific_errors() {
     match PrinterMonitor::new().await {
         Ok(monitor) => {
             // Try to find a non-existent printer
-            match monitor.find_printer("NonExistentPrinter123").await {
+            match monitor
+                .find_printer_cancellable("NonExistentPrinter123", None)
+                .await
+            {
                 Ok(Some(printer)) => {
                     println!("   Unexpectedly found printer: {}", printer.name());
                 }
@@ -193,7 +196,10 @@ async fn handle_specific_errors() {
                 Err(e) => {
                     println!("   Error searching for printer: {}", e);
 
-                    // Handle different error types
+                    // Handle different error types. `PrinterError` is
+                    // `#[non_exhaustive]` since 2.0, so a wildcard arm is
+                    // mandatory - future additive variants in 2.x will land
+                    // there without breaking this match.
                     match e {
                         PrinterError::PlatformNotSupported => {
                             println!("      This platform is not supported");
@@ -210,8 +216,27 @@ async fn handle_specific_errors() {
                         PrinterError::IoError(io_err) => {
                             println!("      I/O error occurred: {}", io_err);
                         }
+                        PrinterError::Cancelled => {
+                            println!("      Operation was cancelled via CancellationToken");
+                        }
+                        PrinterError::TaskPanicked {
+                            printer_name,
+                            panic_message,
+                        } => {
+                            let target = printer_name.as_deref().unwrap_or("<unknown>");
+                            println!(
+                                "      Monitor task for '{}' panicked: {}",
+                                target, panic_message
+                            );
+                        }
                         PrinterError::Other(msg) => {
                             println!("      General error: {}", msg);
+                        }
+                        // 2.x may add additional variants under
+                        // `#[non_exhaustive]` - this arm keeps the example
+                        // forward-compatible without breaking exhaustive code.
+                        _ => {
+                            println!("      Unrecognized PrinterError variant: {}", e);
                         }
                     }
                 }
@@ -231,7 +256,7 @@ async fn handle_wmi_errors() {
 
         match PrinterMonitor::new().await {
             Ok(monitor) => {
-                match monitor.list_printers().await {
+                match monitor.list_printers_cancellable(None).await {
                     Ok(printers) => {
                         println!(
                             "   WMI access successful, found {} printers",

@@ -50,7 +50,11 @@ async fn main() -> Result<(), PrinterError> {
 async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, PrinterError> {
     if let Some(printer_name) = env::args().nth(1) {
         // Verify the printer exists
-        if monitor.find_printer(&printer_name).await?.is_some() {
+        if monitor
+            .find_printer_cancellable(&printer_name, None)
+            .await?
+            .is_some()
+        {
             return Ok(printer_name);
         } else {
             println!(
@@ -61,7 +65,7 @@ async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, Pri
     }
 
     // Find first available printer
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
     if printers.is_empty() {
         return Err(PrinterError::Other(
             "No printers found on this system".to_string(),
@@ -83,12 +87,16 @@ async fn demonstrate_detailed_monitoring(
 
     // Start monitoring in a background task - clone the existing monitor
     // (cheap Arc clone, shares the same backend) rather than re-initialising.
+    // We drive it via the 2.0 `MonitorBuilder::run_changes` so this example
+    // doubles as a demo of the recommended fluent API.
     let monitoring_task = {
         let printer_name = printer_name_clone.clone();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_printer_changes(&printer_name, 1000, None, |changes| {
+                .monitor(&printer_name)
+                .interval_ms(1_000)
+                .run_changes(|changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
 
                     if changes.has_changes() {
@@ -140,42 +148,36 @@ async fn demonstrate_specific_property_monitoring(
     println!("Monitoring specific properties for: {}", printer_name);
     println!("Will monitor 'IsOffline' and 'Status' properties for 20 seconds...");
 
-    // Monitor IsOffline property
+    // Monitor IsOffline property via `MonitorBuilder::filter_property`.
     let printer_name1 = printer_name.to_string();
     let offline_task = {
         let printer_name = printer_name1.clone();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_property(
-                    &printer_name,
-                    MonitorableProperty::IsOffline,
-                    1000,
-                    None,
-                    |change| {
-                        println!("OFFLINE STATUS CHANGE: {}", change.description());
-                    },
-                )
+                .monitor(&printer_name)
+                .interval_ms(1_000)
+                .filter_property(MonitorableProperty::IsOffline)
+                .run_property(|change| {
+                    println!("OFFLINE STATUS CHANGE: {}", change.description());
+                })
                 .await
         })
     };
 
-    // Monitor Status property
+    // Monitor Status property - same builder, different filter.
     let printer_name2 = printer_name.to_string();
     let status_task = {
         let printer_name = printer_name2.clone();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_property(
-                    &printer_name,
-                    MonitorableProperty::Status,
-                    1000,
-                    None,
-                    |change| {
-                        println!("STATUS CHANGE: {}", change.description());
-                    },
-                )
+                .monitor(&printer_name)
+                .interval_ms(1_000)
+                .filter_property(MonitorableProperty::Status)
+                .run_property(|change| {
+                    println!("STATUS CHANGE: {}", change.description());
+                })
                 .await
         })
     };
@@ -196,7 +198,7 @@ async fn demonstrate_specific_property_monitoring(
 async fn demonstrate_multiple_printer_monitoring(
     monitor: &PrinterMonitor,
 ) -> Result<(), PrinterError> {
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.len() < 2 {
         println!("Need at least 2 printers for multiple printer monitoring demo");

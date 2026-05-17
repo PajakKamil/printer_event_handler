@@ -1,7 +1,9 @@
 //! Basic Printer Listing Example
 //!
-//! This example demonstrates how to list all printers on the system with
-//! complete WMI information access including status codes and descriptions.
+//! Demonstrates the 2.0 listing surface: `list_printers_cancellable` for the
+//! raw `Printer` objects (with full WMI detail on Windows) and
+//! `printer_summary_iter` for the lightweight overview struct
+//! [`PrinterSummary`] introduced in 2.0.
 //!
 //! Run with: cargo run --manifest-path examples/Cargo.toml --bin basic_listing
 
@@ -18,8 +20,11 @@ async fn main() -> Result<(), PrinterError> {
     // Create printer monitor
     let monitor = PrinterMonitor::new().await?;
 
-    // Get all printers
-    let printers = monitor.list_printers().await?;
+    // `None` for the optional CancellationToken - matches the 2.0 surface
+    // where `list_printers` / `find_printer` were replaced by their
+    // `_cancellable` counterparts. Pass a real token when you need to abort
+    // the query (see cancellation_token_example.rs).
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("No printers found on this system.");
@@ -115,6 +120,18 @@ async fn main() -> Result<(), PrinterError> {
     println!("   Online: {}", online_count);
     println!("   Offline: {}", offline_count);
     println!("   With errors: {}", error_count);
+
+    // 2.0 also exposes a lightweight `PrinterSummary` view. Use
+    // `printer_summary_iter` when you only need the per-printer status flags
+    // and want to avoid allocating the full HashMap that `printer_summary`
+    // returns.
+    println!("\nPrinterSummary view (printer_summary_iter):");
+    for (name, info) in monitor.printer_summary_iter().await? {
+        println!(
+            "   - {name}: status={}, offline={}, default={}, error={}",
+            info.status, info.is_offline, info.is_default, info.has_error
+        );
+    }
 
     Ok(())
 }

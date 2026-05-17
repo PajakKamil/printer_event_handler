@@ -1,164 +1,85 @@
 # Examples
 
-This directory contains comprehensive examples demonstrating various usage patterns of the printer_event_handler library, including complete WMI property access.
+Walkthroughs for `printer_event_handler` 2.0. Each binary is self-contained -
+pick the one closest to what you want to build.
 
-## Running Examples
+## Building
 
-The examples have their own Cargo.toml to avoid adding unnecessary dependencies to the main library.
+The examples have their own `Cargo.toml` so the main library can stay slim.
+They depend on the parent crate with the `events` feature enabled so
+`events_demo` exercises the WMI / D-Bus subscription path rather than the
+polling fallback.
 
-### From the examples directory:
 ```bash
+# From the examples directory
 cd examples
-
-# List all printers with detailed WMI information
 cargo run --bin basic_listing
 
-# Monitor a specific printer for changes
-cargo run --bin monitor_changes -- "Printer Name"
-cargo run --bin monitor_changes  # Uses first available printer
-
-# Demonstrate error handling patterns
-cargo run --bin error_handling
-
-# Advanced async patterns and concurrent monitoring
-cargo run --bin async_patterns
-
-# Property-level change monitoring
-cargo run --bin property_monitoring -- "Printer Name"
-cargo run --bin property_monitoring  # Uses first available printer
-
-# Cancellation token examples
-cargo run --bin cancellation_token_example -- "Printer Name"
-cargo run --bin cancellation_token_example  # Uses first available printer
-```
-
-### From the main project directory:
-```bash
-# Run examples using cargo run with manifest path
+# Or from the project root, via the manifest path
 cargo run --manifest-path examples/Cargo.toml --bin basic_listing
-cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer Name"
-cargo run --manifest-path examples/Cargo.toml --bin error_handling
-cargo run --manifest-path examples/Cargo.toml --bin async_patterns
-cargo run --manifest-path examples/Cargo.toml --bin property_monitoring -- "Printer Name"
-cargo run --manifest-path examples/Cargo.toml --bin cancellation_token_example -- "Printer Name"
 ```
 
-## Example Files
+## Recommended order
 
-### [`basic_listing.rs`](basic_listing.rs)
-Demonstrates how to list all printers with complete WMI property access:
-- Raw status codes (PrinterStatus, PrinterState, etc.)
-- Human-readable descriptions
-- WMI Status property values
-- Summary statistics
+If you are new to the crate, the examples roughly progress from the
+simplest API to the most advanced:
 
-**Features shown:**
-- `printer_status_code()` and `printer_status_description()`
-- `printer_state_code()` and `printer_state_description()`
-- `detected_error_state_code()` and `detected_error_state_description()`
-- `extended_printer_status_code()` and `extended_printer_status_description()`
-- `wmi_status()` for system-level status assessment
+1. **`basic_listing`** - one-shot enumeration via `list_printers_cancellable`
+   and `printer_summary_iter`.
+2. **`monitor_changes`** - the `MonitorBuilder` fluent surface
+   (`monitor(name).interval_ms(...).run_printer(...)`) for current+previous
+   snapshot monitoring.
+3. **`property_monitoring`** - `filter_property(...)` + `run_property` to
+   watch a single field, plus the underlying `monitor_multiple_printers`
+   call for fanning across queues.
+4. **`streaming_changes`** - `run_changes_stream` / `run_property_stream`
+   for code that prefers `tokio_stream::Stream` over a callback.
+5. **`cancellation_token_example`** - `CancellationToken` plumbing through
+   `MonitorBuilder::cancel_token` and across concurrent monitors.
+6. **`error_handling`** - matches on `PrinterError` (including the
+   `#[non_exhaustive]` wildcard arm), retry / fallback patterns, and the
+   `Cancelled` / `TaskPanicked` variants new in 2.0.
+7. **`async_patterns`** - `JoinSet`, `mpsc` / `ReceiverStream`, shared state
+   with `RwLock`, plus the library's high-level
+   `monitor_multiple_printers` for the same fan-out.
+8. **`events_demo`** - `with_events(true)` for the WMI / D-Bus subscription
+   path. Falls back to polling with a warn-log if the `events` feature is
+   off.
+9. **`jobs_listing`** - `list_jobs` over all printers or a single named
+   queue. Showcases the Windows / lpstat / libcups differences in the
+   populated [`Job`] fields.
 
-### [`monitor_changes.rs`](monitor_changes.rs) 
-Shows how to monitor printer status changes with detailed change detection:
-- Real-time status monitoring
-- Detailed WMI property change detection
-- Status comparison between checks
-- Command-line printer selection
+## 2.0 changes worth knowing
 
-**Features shown:**
-- Status change detection with WMI details
-- Before/after comparison of all WMI properties
-- Timestamp logging
-- Graceful handling of printer availability
+If you are porting code from 1.x:
 
-### [`error_handling.rs`](error_handling.rs)
-Comprehensive error handling patterns:
-- Basic error handling with match statements
-- Retry logic with exponential backoff
-- Graceful degradation when features unavailable
-- Platform-specific error handling (Windows WMI, Linux CUPS)
+- `PrinterMonitor::list_printers` and `find_printer` were removed. Use
+  `list_printers_cancellable(None)` and `find_printer_cancellable(name, None)`
+  - pass `Some(token)` to abort the query.
+- Every public enum is `#[non_exhaustive]` (`PrinterError`, `PrinterState`,
+  `ErrorState`, `PrinterStatus`, `JobStatus`). Exhaustive `match`es need a
+  wildcard arm - see `error_handling.rs`.
+- The `monitor_printer*` direct methods still exist, but
+  `monitor.monitor(name).interval_ms(...).run_*(...)` is the recommended
+  fluent form. Examples 2-6 use it.
+- `PrinterBackend::list_jobs` is now required (no default impl). The
+  `jobs_listing` example calls it via `PrinterMonitor::list_jobs`.
 
-**Features shown:**
-- WMI-specific error handling
-- Graceful fallbacks when WMI properties unavailable
-- Error recovery strategies
-- Platform-specific debugging tips
+## Cargo features the examples touch
 
-### [`async_patterns.rs`](async_patterns.rs)
-Advanced async usage patterns:
-- Concurrent printer monitoring
-- Streaming status updates with channels
-- Background monitoring with shared state
-- Multi-printer concurrent analysis
+- `events` (enabled by default for the example workspace) - flips
+  `with_events(true)` from "warn and poll" to a real WMI or CUPS D-Bus
+  subscription. See `events_demo.rs`.
+- `linux-libcups` (opt-in, requires `libcups2-dev` / `cups-devel`) - swaps
+  the lpstat subprocess parser for direct libcups FFI. Affects which
+  fields `jobs_listing` can populate. Build with
+  `cargo build --manifest-path examples/Cargo.toml --features printer_event_handler/linux-libcups`.
 
-**Features shown:**
-- Concurrent access to WMI properties
-- Health scoring based on WMI status
-- Background state management
-- Stream processing of printer updates
+## Platform notes
 
-### [`property_monitoring.rs`](property_monitoring.rs)
-Property-level change monitoring and detection with type-safe property selection:
-- Individual property change tracking
-- Detailed change descriptions
-- Specific property monitoring using `MonitorableProperty` enum
-- Multi-printer concurrent monitoring
-
-**Features shown:**
-- `monitor_printer_changes()` for detailed change detection
-- `monitor_property()` with type-safe `MonitorableProperty` enum
-- `monitor_multiple_printers()` for concurrent monitoring
-- `PropertyChange` and `PrinterChanges` types
-- Type-safe property selection (e.g., `MonitorableProperty::IsOffline`)
-- Property-specific callbacks and filtering
-
-### [`cancellation_token_example.rs`](cancellation_token_example.rs)
-Demonstrates using cancellation tokens to gracefully stop monitoring tasks:
-- Basic cancellation after timeout
-- Multiple monitors with individual cancellation
-- Coordinated shutdown of multiple monitors
-- Conditional cancellation based on printer state
-
-**Features shown:**
-- `CancellationToken` usage with all monitor methods
-- Graceful shutdown patterns
-- Multiple concurrent monitors with shared or individual tokens
-- Time-based and condition-based cancellation
-- Clean task cleanup and error handling
-
-## Key WMI Properties Demonstrated
-
-All examples showcase the complete set of WMI properties available:
-
-### Raw Status Codes
-- **PrinterStatus** (1-7) - Current/recommended property
-- **PrinterState** (0-25) - Obsolete but detailed property  
-- **DetectedErrorState** (0-11) - Error condition codes
-- **ExtendedPrinterStatus** - Extended status information
-- **ExtendedDetectedErrorState** - Extended error information
-
-### Status Descriptions
-- Human-readable descriptions for all numeric codes
-- Fallback handling when descriptions unavailable
-- Practical interpretation of status combinations
-
-### WMI Status Property
-- System-level status assessment ("OK", "Degraded", "Error", etc.)
-- Integration with offline detection logic
-- Health assessment patterns
-
-## Usage Tips
-
-1. **Start with `basic_listing.rs`** to understand available WMI properties
-2. **Use `monitor_changes.rs`** to see real-time status updates
-3. **Try `property_monitoring.rs`** for detailed property-level change tracking
-4. **Learn `cancellation_token_example.rs`** for graceful shutdown patterns
-5. **Study `error_handling.rs`** for production-ready error handling
-6. **Explore `async_patterns.rs`** for advanced concurrent usage
-
-## Platform Notes
-
-- **Windows**: All WMI properties fully available
-- **Linux**: Basic status detection with CUPS integration
-- Examples gracefully handle platform differences
+- **Windows**: every WMI property is populated and the event path uses
+  `__InstanceModificationEvent`.
+- **Linux (lpstat backend)**: basic status, no page counters or document
+  name on jobs, polling-only unless `events` is enabled.
+- **Linux (libcups backend)**: structured printer / job data, document
+  title on jobs, polling fallback. Same `events` D-Bus path applies.

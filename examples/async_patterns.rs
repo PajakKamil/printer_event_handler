@@ -140,7 +140,7 @@ where
 /// Example 5 for the library's built-in equivalent.
 async fn concurrent_monitoring(shutdown: CancellationToken) -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("   No printers found for concurrent monitoring");
@@ -194,7 +194,10 @@ async fn monitor_single_printer(
         }
         check_count += 1;
 
-        if let Some(printer) = monitor.find_printer(&printer_name).await? {
+        if let Some(printer) = monitor
+            .find_printer_cancellable(&printer_name, None)
+            .await?
+        {
             println!(
                 "   [{}] Check #{}: Status={}, WMI Status={:?}",
                 printer_name,
@@ -219,7 +222,7 @@ async fn monitor_single_printer(
 /// demonstrate back-pressure (see `STREAM_BUFFER` comment).
 async fn streaming_updates(shutdown: CancellationToken) -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("   No printers found for streaming");
@@ -254,7 +257,10 @@ async fn streaming_updates(shutdown: CancellationToken) -> Result<(), PrinterErr
                     break;
                 }
 
-                match monitor.find_printer(&printer_name).await {
+                match monitor
+                    .find_printer_cancellable(&printer_name, None)
+                    .await
+                {
                     Ok(Some(printer)) => {
                         let update = PrinterStatusUpdate {
                             timestamp: chrono::Local::now(),
@@ -313,7 +319,7 @@ async fn streaming_updates(shutdown: CancellationToken) -> Result<(), PrinterErr
 /// `RwLock<HashMap>`, while a reader periodically reports the snapshot.
 async fn background_monitoring(shutdown: CancellationToken) -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("   No printers found for background monitoring");
@@ -345,7 +351,7 @@ async fn background_monitoring(shutdown: CancellationToken) -> Result<(), Printe
 
                 println!("   Background scan #{}", iterations);
 
-                match monitor.list_printers().await {
+                match monitor.list_printers_cancellable(None).await {
                     Ok(current_printers) => {
                         let mut state = shared_state.write().await;
 
@@ -436,7 +442,7 @@ async fn concurrent_analysis(shutdown: CancellationToken) -> Result<(), PrinterE
     }
 
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("   No printers found for analysis");
@@ -487,7 +493,7 @@ async fn concurrent_analysis(shutdown: CancellationToken) -> Result<(), PrinterE
 /// without requiring Ctrl+C.
 async fn library_multi_monitor(shutdown: CancellationToken) -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("   No printers found for library-driven monitoring");

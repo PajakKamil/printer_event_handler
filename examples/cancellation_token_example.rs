@@ -59,7 +59,11 @@ async fn main() -> Result<(), PrinterError> {
 async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, PrinterError> {
     if let Some(printer_name) = env::args().nth(1) {
         // Verify the printer exists
-        if monitor.find_printer(&printer_name).await?.is_some() {
+        if monitor
+            .find_printer_cancellable(&printer_name, None)
+            .await?
+            .is_some()
+        {
             return Ok(printer_name);
         } else {
             println!(
@@ -70,7 +74,7 @@ async fn get_target_printer_name(monitor: &PrinterMonitor) -> Result<String, Pri
     }
 
     // Find first available printer
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
     if printers.is_empty() {
         return Err(PrinterError::Other(
             "No printers found on this system".to_string(),
@@ -92,24 +96,24 @@ async fn basic_cancellation_example(
     let cancel_token_clone = cancel_token.clone();
 
     // Spawn monitoring task - clone the existing monitor (cheap Arc clone).
+    // This is the recommended 2.0 form: `MonitorBuilder::cancel_token`
+    // attaches the token via the builder, no positional `Some(...)` plumbing.
     let printer_name_owned = printer_name.to_string();
     let monitor_task = {
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_printer_changes(
-                    &printer_name_owned,
-                    1000,
-                    Some(cancel_token_clone),
-                    |changes| {
-                        let timestamp = changes.timestamp.format("%H:%M:%S");
-                        if changes.has_changes() {
-                            println!("[{}] Changes detected: {}", timestamp, changes.summary());
-                        } else {
-                            println!("[{}] Monitoring active...", timestamp);
-                        }
-                    },
-                )
+                .monitor(&printer_name_owned)
+                .interval_ms(1_000)
+                .cancel_token(cancel_token_clone)
+                .run_changes(|changes| {
+                    let timestamp = changes.timestamp.format("%H:%M:%S");
+                    if changes.has_changes() {
+                        println!("[{}] Changes detected: {}", timestamp, changes.summary());
+                    } else {
+                        println!("[{}] Monitoring active...", timestamp);
+                    }
+                })
                 .await
         })
     };
@@ -134,7 +138,7 @@ async fn basic_cancellation_example(
 
 /// Example 2: Multiple monitors with individual cancellation
 async fn multiple_monitors_cancellation(monitor: &PrinterMonitor) -> Result<(), PrinterError> {
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("No printers found for this example");
@@ -345,7 +349,7 @@ async fn conditional_cancellation(
             loop {
                 interval.tick().await;
 
-                if let Some(printer) = monitor.find_printer(&name).await? {
+                if let Some(printer) = monitor.find_printer_cancellable(&name, None).await? {
                     if printer.is_offline() {
                         println!("\nPrinter went offline! Cancelling monitoring...");
                         cancel.cancel();
