@@ -50,21 +50,28 @@ impl<'a> MonitorBuilder<'a> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<PrinterChanges>();
 
         // When the `events` feature is on AND the caller opted in via
-        // `with_events(true)` AND we're on Windows, route through the WMI
-        // notification subscription. Otherwise fall through to polling.
+        // `with_events(true)`, route through the platform-specific event
+        // subscription (WMI on Windows, CUPS D-Bus on unix). Otherwise
+        // fall through to polling.
         #[cfg(all(windows, feature = "events"))]
         if self.use_events {
-            super::events::spawn_event_subscription(
+            super::events::spawn_event_subscription(tx, self.printer_name, self.cancel_token);
+            return UnboundedReceiverStream::new(rx);
+        }
+        #[cfg(all(unix, feature = "events"))]
+        if self.use_events {
+            super::events_cups::spawn_cups_subscription(
                 tx,
                 self.printer_name,
                 self.cancel_token,
+                self.monitor.clone(),
             );
             return UnboundedReceiverStream::new(rx);
         }
-        #[cfg(not(all(windows, feature = "events")))]
+        #[cfg(not(any(all(windows, feature = "events"), all(unix, feature = "events"))))]
         if self.use_events {
             warn!(
-                "MonitorBuilder::with_events(true) requires the `events` cargo feature on Windows; falling back to polling"
+                "MonitorBuilder::with_events(true) requires the `events` cargo feature; falling back to polling"
             );
         }
 

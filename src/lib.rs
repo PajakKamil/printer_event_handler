@@ -98,7 +98,7 @@
 //!     let monitor = PrinterMonitor::new().await?;
 //!     
 //!     // List all printers with complete WMI information
-//!     let printers = monitor.list_printers().await?;
+//!     let printers = monitor.list_printers_cancellable(None).await?;
 //!     for printer in printers {
 //!         println!("Printer: {}", printer.name());
 //!         println!("Status: {}", printer.status_description());

@@ -1,6 +1,6 @@
 [package]
 name = "printer_event_handler"
-version = "1.5.0"
+version = "2.0.0"
 edition = "2024"
 description = "A cross-platform printer status monitoring library for Windows and Linux"
 license = "MIT OR Apache-2.0"
@@ -46,23 +46,38 @@ serde = []
 # dual-emit. Both backends accept the same format-string call sites, so
 # enabling this is a drop-in replacement.
 tracing = ["dep:tracing"]
-# Enables an event-driven monitoring path on Windows backed by WMI's
+# Enables an event-driven monitoring path. On Windows, backed by WMI's
 # `__InstanceModificationEvent` notifications (via `wmi::WMIConnection`'s
-# `raw_notification`). Opt-in via `MonitorBuilder::with_events(true)`. The
-# polling path remains the default. Windows-only - on other platforms the
-# feature is a no-op and the builder falls back to polling.
-events = []
+# `raw_notification`). On Linux/macOS, backed by CUPS's `org.cups.cupsd.Notifier`
+# D-Bus signals (via the `zbus` crate). Opt-in via
+# `MonitorBuilder::with_events(true)`. The polling path remains the default and
+# is used as a fallback when D-Bus / WMI is unavailable.
+events = ["dep:zbus", "dep:futures-util"]
+# Enables a libcups FFI backend on Linux for faster queries and structured
+# printer/job data without forking `lpstat`. Hand-rolled `extern "C"`
+# bindings to libcups2 - no Rust dep. Requires `libcups2-dev`
+# (Debian/Ubuntu) / `cups-devel` (Fedora) at build time. Default Linux
+# build keeps using `lpstat` subprocess parsing.
+linux-libcups = []
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.52.3", features = ["rt", "macros", "time", "process", "fs", "sync"] }
-tokio-stream = "0.1"
+tokio-stream = "0.1.18"
 tokio-util = "0.7.18"
 log = "0.4.29"
 env_logger = "0.11.10"
-tracing = { version = "0.1", optional = true }
+tracing = { version = "0.1.44", optional = true }
 chrono = { version = "0.4.44", features = ["serde"] }
 async-trait = "0.1.89"
+# `events` feature (Linux/macOS path) - D-Bus signal subscription to
+# `org.cups.cupsd.Notifier`. Pulled in only when `events` is enabled; on
+# Windows `zbus` is unused. We declare it once here (cross-platform) rather
+# than gating to `cfg(unix)` because cargo features feed `dep:zbus` into the
+# resolver before target filters apply; the dep is light and unused-on-Windows
+# builds simply do not link it.
+zbus = { version = "5", default-features = false, features = ["tokio"], optional = true }
+futures-util = { version = "0.3", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 wmi = "0.18.4"

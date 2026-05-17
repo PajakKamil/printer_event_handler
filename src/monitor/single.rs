@@ -11,51 +11,30 @@ use super::summary::PrinterSummary;
 use super::{MAX_CONSECUTIVE_MONITOR_ERRORS, PrinterMonitor};
 
 impl PrinterMonitor {
-    /// Retrieves a list of all printers available on the system.
+    /// Retrieves a list of all printers available on the system, with an
+    /// optional [`CancellationToken`] to abort the in-flight backend query.
     ///
-    /// This method queries the platform-specific printer service to get
-    /// information about all installed and available printers.
+    /// When `cancel_token` is provided, the backend query is raced against
+    /// `token.cancelled()` and the call returns [`PrinterError::Cancelled`]
+    /// as soon as the token fires. Passing `None` waits for the query to
+    /// complete normally.
     ///
-    /// # Returns
-    /// * `Result<Vec<Printer>>` - A vector of all printers found on the system
-    ///
-    /// # Errors
-    /// * `PrinterError::WmiError` - If the WMI query fails on Windows
-    /// * `PrinterError::CupsError` - If the CUPS query fails on Linux
-    /// * `PrinterError::IoError` - If there are system I/O issues
+    /// Note that the backend query (a WMI call on Windows, an `lpstat` exec
+    /// or libcups call on Linux) is not itself abortable - cancellation
+    /// surfaces as soon as the current poll completes, not mid-flight.
     ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let monitor = PrinterMonitor::new().await.unwrap();
-    ///     let printers = monitor.list_printers().await.unwrap();
-    ///
-    ///     for printer in printers {
-    ///         println!("{}: {}", printer.name(), printer.status_description());
-    ///     }
+    /// # async fn _docs() {
+    /// let monitor = PrinterMonitor::new().await.unwrap();
+    /// let printers = monitor.list_printers_cancellable(None).await.unwrap();
+    /// for printer in printers {
+    ///     println!("{}: {}", printer.name(), printer.status_description());
     /// }
+    /// # }
     /// ```
-    #[deprecated(
-        since = "1.5.0",
-        note = "use `list_printers_cancellable` to support cancellation; this method will be removed in 2.0"
-    )]
-    pub async fn list_printers(&self) -> Result<Vec<Printer>> {
-        self.backend.list_printers().await
-    }
-
-    /// Cancellable variant of [`Self::list_printers`].
-    ///
-    /// When `cancel_token` is provided, the in-flight backend query is raced
-    /// against `token.cancelled()` and the call returns
-    /// [`PrinterError::Cancelled`] as soon as the token fires. Passing `None`
-    /// is equivalent to the deprecated [`Self::list_printers`].
-    ///
-    /// Note that the backend query (a WMI call on Windows, an `lpstat` exec on
-    /// Linux) is not itself abortable - cancellation surfaces as soon as the
-    /// current poll completes, not mid-flight.
     pub async fn list_printers_cancellable(
         &self,
         cancel_token: Option<CancellationToken>,
@@ -69,48 +48,24 @@ impl PrinterMonitor {
         }
     }
 
-    /// Searches for a specific printer by name using case-insensitive matching.
+    /// Searches for a specific printer by name (case-insensitive), with an
+    /// optional [`CancellationToken`].
     ///
-    /// This method searches through all available printers to find one with
-    /// a name that matches the provided string (case-insensitive).
-    ///
-    /// # Arguments
-    /// * `name` - The name of the printer to search for
-    ///
-    /// # Returns
-    /// * `Result<Option<Printer>>` - The found printer or None if not found
-    ///
-    /// # Errors
-    /// * `PrinterError::WmiError` - If the WMI query fails on Windows
-    /// * `PrinterError::CupsError` - If the CUPS query fails on Linux
-    /// * `PrinterError::IoError` - If there are system I/O issues
+    /// See [`Self::list_printers_cancellable`] for the cancellation
+    /// semantics (token races against the in-flight backend query and yields
+    /// [`PrinterError::Cancelled`]).
     ///
     /// # Example
     /// ```rust,no_run
     /// use printer_event_handler::PrinterMonitor;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let monitor = PrinterMonitor::new().await.unwrap();
-    ///
-    ///     if let Some(printer) = monitor.find_printer("HP LaserJet").await.unwrap() {
-    ///         println!("Found printer: {}", printer.name());
-    ///     }
+    /// # async fn _docs() {
+    /// let monitor = PrinterMonitor::new().await.unwrap();
+    /// if let Some(p) = monitor.find_printer_cancellable("HP LaserJet", None).await.unwrap() {
+    ///     println!("Found printer: {}", p.name());
     /// }
+    /// # }
     /// ```
-    #[deprecated(
-        since = "1.5.0",
-        note = "use `find_printer_cancellable` to support cancellation; this method will be removed in 2.0"
-    )]
-    pub async fn find_printer(&self, name: &str) -> Result<Option<Printer>> {
-        self.backend.find_printer(name).await
-    }
-
-    /// Cancellable variant of [`Self::find_printer`].
-    ///
-    /// See [`Self::list_printers_cancellable`] for the cancellation semantics
-    /// (token races against the in-flight backend query and yields
-    /// [`PrinterError::Cancelled`]).
     pub async fn find_printer_cancellable(
         &self,
         name: &str,
@@ -615,11 +570,10 @@ mod tests {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[allow(deprecated)]
     async fn test_list_printers_windows() {
         let monitor = PrinterMonitor::new().await;
         if let Ok(monitor) = monitor {
-            let printers = monitor.list_printers().await;
+            let printers = monitor.list_printers_cancellable(None).await;
             // Either we get printers or an error, but it should return something
             match printers {
                 Ok(printer_list) => {
@@ -634,13 +588,12 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
-    #[allow(deprecated)]
     async fn test_list_printers_unix() {
         let monitor = PrinterMonitor::new().await;
         assert!(monitor.is_ok());
 
         if let Ok(monitor) = monitor {
-            let printers = monitor.list_printers().await;
+            let printers = monitor.list_printers_cancellable(None).await;
             // Should return either printers or an error, but not panic
             match printers {
                 Ok(printer_list) => {
@@ -654,11 +607,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
     async fn test_find_nonexistent_printer() {
         let monitor = PrinterMonitor::new().await;
         if let Ok(monitor) = monitor {
-            let result = monitor.find_printer("NonExistentPrinter_12345_ABCDE").await;
+            let result = monitor
+                .find_printer_cancellable("NonExistentPrinter_12345_ABCDE", None)
+                .await;
             match result {
                 Ok(None) => {
                     // Expected: printer not found

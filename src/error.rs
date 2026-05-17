@@ -1,7 +1,12 @@
 use std::fmt;
 
-/// Errors that can occur when working with printers
+/// Errors that can occur when working with printers.
+///
+/// Marked `#[non_exhaustive]` since 2.0 so that future additive variants
+/// (e.g. new platform backends, new failure modes) don't force a major bump.
+/// Downstream `match`es must include a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PrinterError {
     /// WMI connection or query failed
     WmiError(String),
@@ -54,7 +59,11 @@ impl fmt::Display for PrinterError {
                 panic_message,
             } => {
                 let owner = printer_name.as_deref().unwrap_or("<unknown>");
-                write!(f, "monitoring task for {} panicked: {}", owner, panic_message)
+                write!(
+                    f,
+                    "monitoring task for {} panicked: {}",
+                    owner, panic_message
+                )
             }
             PrinterError::Other(msg) => write!(f, "{}", msg),
         }

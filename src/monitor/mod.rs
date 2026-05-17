@@ -16,6 +16,8 @@ use crate::logging::pe_info as info;
 mod builder;
 #[cfg(all(windows, feature = "events"))]
 mod events;
+#[cfg(all(unix, feature = "events"))]
+mod events_cups;
 mod presence;
 mod property;
 mod single;

@@ -197,7 +197,12 @@ impl<'a> MonitorBuilder<'a> {
         if self.wait_for_appearance {
             return Ok(());
         }
-        match self.monitor.backend.find_printer(&self.printer_name).await? {
+        match self
+            .monitor
+            .backend
+            .find_printer(&self.printer_name)
+            .await?
+        {
             Some(_) => Ok(()),
             None => Err(crate::PrinterError::PrinterNotFound(
                 self.printer_name.clone(),
@@ -226,10 +231,7 @@ mod tests {
         let Ok(monitor) = PrinterMonitor::new().await else {
             return; // Skip when backend unavailable in CI.
         };
-        let result = monitor
-            .monitor("anything")
-            .run_property(|_| {})
-            .await;
+        let result = monitor.monitor("anything").run_property(|_| {}).await;
         match result {
             Err(crate::PrinterError::Other(msg)) => {
                 assert!(msg.contains("filter_property"));

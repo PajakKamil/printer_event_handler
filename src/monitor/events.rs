@@ -91,10 +91,7 @@ pub(super) fn spawn_event_subscription(
             if let Some(ref token) = cancel_token
                 && token.is_cancelled()
             {
-                info!(
-                    "Event subscription for '{}' cancelled",
-                    printer_name
-                );
+                info!("Event subscription for '{}' cancelled", printer_name);
                 return;
             }
             if tx.is_closed() {

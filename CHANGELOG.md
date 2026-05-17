@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-05-17
+
+Major release focused on Linux feature parity with the Windows backend.
+Adds CUPS D-Bus event-driven monitoring, an opt-in libcups FFI backend,
+~25 additional IPP `printer-state-reasons` mappings, and a unified Job
+constructor that surfaces document titles on the libcups path. The
+breaking changes the major bump unlocks are bundled here: `#[non_exhaustive]`
+on every public enum, mandatory `PrinterBackend::list_jobs`, and removal
+of the 1.5.0-deprecated `list_printers` / `find_printer` methods.
+
+### Added
+
+- **CUPS event-driven monitoring** - `MonitorBuilder::with_events(true)`
+  now works on Linux/macOS, backed by `org.cups.cupsd.Notifier` D-Bus
+  signals via the `zbus` crate. Failure modes (no D-Bus, cupsd built
+  without `--enable-dbus`) silently fall back to polling, matching the
+  Windows path's tolerance. Same `events` cargo feature gates both
+  platforms.
+- **`linux-libcups` cargo feature** - opt-in libcups2 FFI backend
+  selected automatically by `create_backend()` when enabled. Faster
+  than the default `lpstat` subprocess path, surfaces document titles
+  on jobs, and unlocks future CUPS subscription work. Requires
+  `libcups2-dev` / `cups-devel` at build time. Default Linux build keeps
+  using `lpstat` so no system library is required.
+- **Extended `printer-state-reasons` mapping** - 25+ additional IPP
+  reason stems now decoded into typed `ErrorState` / `PrinterState`
+  values (`media-path-jam`, `service-required`, `marker-supply-missing`,
+  `fuser-over-temp`, `power-save`, `in-use`, `processing-to-stop-point`,
+  etc.). Several `PrinterState` flags (`WarmingUp`, `Busy`, `Processing`,
+  `Initializing`, `UserInterventionRequired`, `PowerSave`) now light up
+  on Linux for the first time.
+- **`Job::document` populated on libcups path** - `cups_job_t.title`
+  feeds the `document` field, matching the Windows `Win32_PrintJob.Document`
+  behaviour. Page counters still require IPP `Get-Job-Attributes` (planned
+  follow-up).
+
+### Changed (breaking)
+
+- **`PrinterError`, `PrinterState`, `ErrorState`, `PrinterStatus`,
+  `JobStatus` are now `#[non_exhaustive]`** - downstream exhaustive
+  `match` arms need a wildcard arm to keep compiling. Future additive
+  variants in 2.x are non-breaking.
+- **`PrinterBackend::list_jobs` is now required** - the 1.5.0 default
+  `Ok(vec![])` impl is gone; every backend must implement it explicitly.
+- **`Job::from_lpstat` -> `Job::from_cups`** - unified constructor shared
+  by the `lpstat` and `libcups` paths, with new optional fields
+  (`document`, `total_pages`, `pages_printed`, `name`). Only affects
+  downstream code that built `Job` instances directly (rare - the
+  constructor is `pub(crate)`).
+- **`events` cargo feature now pulls in `zbus`** on every target -
+  unused on Windows, exercised on Linux/macOS. If you enable `events`
+  in your dependency graph this adds ~1 MB to the dep tree.
+
+### Removed (breaking)
+
+- **`PrinterMonitor::list_printers`** - use `list_printers_cancellable(None)`.
+- **`PrinterMonitor::find_printer`** - use `find_printer_cancellable(name, None)`.
+  Both were deprecated in 1.5.0; the 2.0 bump removes the deprecation
+  shim. The cancellable variants accept `None` for the existing
+  no-cancellation behaviour.
+
+### Migration
+
+```rust
+// 1.x
+let printers = monitor.list_printers().await?;
+let printer  = monitor.find_printer("HP").await?;
+
+// 2.0
+let printers = monitor.list_printers_cancellable(None).await?;
+let printer  = monitor.find_printer_cancellable("HP", None).await?;
+```
+
+If your code matched exhaustively on `PrinterError`, `PrinterState`,
+`ErrorState`, `PrinterStatus`, or `JobStatus`, add a `_ => ...` arm.
+
+### Dependencies
+
+- **Added** - `zbus` 5 (Linux D-Bus client, gated on the `events`
+  feature), `futures-util` (signal stream iteration, same gate).
+
 ## [1.5.0] - 2026-05-17
 
 ### Added

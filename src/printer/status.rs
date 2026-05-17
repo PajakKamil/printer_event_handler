@@ -4,6 +4,7 @@
 /// Values 1-7 according to Microsoft documentation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum PrinterStatus {
     Other,           // 1
     Unknown,         // 2

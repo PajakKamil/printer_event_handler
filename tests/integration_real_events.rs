@@ -701,6 +701,13 @@ impl PrinterBackend for ScriptedBackend {
             Some(ScriptStep::Error(kind)) => Err(kind.build()),
         }
     }
+
+    async fn list_jobs(
+        &self,
+        _printer_name: Option<&str>,
+    ) -> Result<Vec<printer_event_handler::Job>> {
+        Ok(Vec::new())
+    }
 }
 
 fn make_printer(
@@ -742,7 +749,7 @@ async fn detects_printer_disappearance() {
         .expect("PrinterMonitor::new must succeed on a supported platform");
 
     let found = monitor
-        .find_printer(TEST_PRINTER)
+        .find_printer_cancellable(TEST_PRINTER, None)
         .await
         .expect("find_printer must not error");
     assert!(
@@ -825,7 +832,7 @@ async fn list_printers_observes_test_printer() {
 
     let monitor = PrinterMonitor::new().await.expect("monitor init");
     let printers = monitor
-        .list_printers()
+        .list_printers_cancellable(None)
         .await
         .expect("list_printers must not error on a supported platform");
 
@@ -853,7 +860,7 @@ async fn find_printer_case_insensitive() {
     let monitor = PrinterMonitor::new().await.expect("monitor init");
     let upper = TEST_PRINTER_CASEI.to_uppercase();
     let found = monitor
-        .find_printer(&upper)
+        .find_printer_cancellable(&upper, None)
         .await
         .expect("find_printer must not error");
     assert!(
@@ -874,7 +881,7 @@ async fn find_printer_missing_returns_ok_none() {
         }
     };
     let result = monitor
-        .find_printer("DefinitelyNotARealPrinter_Test_99999_xyz")
+        .find_printer_cancellable("DefinitelyNotARealPrinter_Test_99999_xyz", None)
         .await;
     assert!(
         matches!(result, Ok(None)),
@@ -894,7 +901,7 @@ async fn list_printers_after_remove_excludes() {
     let monitor = PrinterMonitor::new().await.expect("monitor init");
 
     let before: Vec<String> = monitor
-        .list_printers()
+        .list_printers_cancellable(None)
         .await
         .expect("list_printers")
         .into_iter()
@@ -918,7 +925,7 @@ async fn list_printers_after_remove_excludes() {
         let mut cleared = false;
         while start.elapsed() < EVENT_DEADLINE {
             let names: Vec<String> = monitor
-                .list_printers()
+                .list_printers_cancellable(None)
                 .await
                 .unwrap_or_default()
                 .into_iter()
@@ -981,7 +988,7 @@ async fn printer_all_accessors_do_not_panic() {
 
     let monitor = PrinterMonitor::new().await.expect("monitor init");
     let printer = monitor
-        .find_printer(TEST_PRINTER_ACCESSORS)
+        .find_printer_cancellable(TEST_PRINTER_ACCESSORS, None)
         .await
         .expect("find_printer")
         .expect("printer should be found");
@@ -1490,7 +1497,7 @@ async fn windows_rename_visible_via_list_printers() {
     let monitor = PrinterMonitor::new().await.expect("monitor init");
 
     let before: Vec<String> = monitor
-        .list_printers()
+        .list_printers_cancellable(None)
         .await
         .expect("list_printers")
         .into_iter()
@@ -1513,7 +1520,7 @@ async fn windows_rename_visible_via_list_printers() {
         let mut saw = false;
         while start.elapsed() < EVENT_DEADLINE {
             let names: Vec<String> = monitor
-                .list_printers()
+                .list_printers_cancellable(None)
                 .await
                 .unwrap_or_default()
                 .into_iter()

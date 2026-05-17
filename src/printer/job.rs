@@ -47,6 +47,7 @@ pub(crate) const JOB_STATUS_COMPLETE: u32 = 0x0000_1000;
 /// single variant using a priority chain similar to `PrinterState::from_u32`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum JobStatus {
     None,
     Paused,
@@ -204,31 +205,39 @@ impl Job {
         }
     }
 
-    /// Constructs a [`Job`] from CUPS `lpstat -l -o` output.
+    /// Constructs a [`Job`] from a CUPS source - shared by both the `lpstat`
+    /// subprocess parser and the `linux-libcups` FFI backend.
     ///
-    /// CUPS doesn't expose `Win32_PrintJob`'s page counters (`total_pages` /
-    /// `pages_printed`), so those stay `None`. `job_status_code` is also
-    /// `None` because CUPS has no equivalent bitmask - the parsed text from
-    /// the `Status:` line is preserved in `status_string`, and the resolved
-    /// enum lives in `status`.
+    /// Fields the source doesn't expose stay `None`. CUPS has no equivalent
+    /// of `Win32_PrintJob`'s bitmask, so `job_status_code` is always `None`
+    /// on this path - the parsed enum is the source of truth via
+    /// [`Self::status`]. Page counters (`total_pages` / `pages_printed`)
+    /// are not exposed by either `lpstat` or `cupsGetJobs2()`; an IPP
+    /// `Get-Job-Attributes` round trip would surface them, but that's
+    /// deferred to a future minor.
     #[cfg(unix)]
-    pub(crate) fn from_lpstat(
+    #[allow(clippy::too_many_arguments)] // CUPS exposes this many distinct fields; bundling them into a struct would just shift the noise.
+    pub(crate) fn from_cups(
         job_id: u32,
         printer_name: Option<String>,
         status: JobStatus,
         status_string: Option<String>,
+        document: Option<String>,
         owner: Option<String>,
         time_submitted_raw: Option<String>,
+        total_pages: Option<u32>,
+        pages_printed: Option<u32>,
+        name: Option<String>,
     ) -> Self {
         Self {
             job_id,
-            name: None,
-            document: None,
+            name,
+            document,
             status_string,
             status,
             job_status_code: None,
-            total_pages: None,
-            pages_printed: None,
+            total_pages,
+            pages_printed,
             time_submitted_raw,
             owner,
             printer_name,
@@ -314,7 +323,10 @@ mod tests {
         // Zero is `None`.
         assert_eq!(JobStatus::from_u32(0), JobStatus::None);
         // Operational state.
-        assert_eq!(JobStatus::from_u32(JOB_STATUS_PRINTING), JobStatus::Printing);
+        assert_eq!(
+            JobStatus::from_u32(JOB_STATUS_PRINTING),
+            JobStatus::Printing
+        );
     }
 
     #[test]

@@ -63,20 +63,27 @@ pub(super) fn parse_jobs(stdout: &str, name_filter: Option<&str>) -> Vec<Job> {
         }
 
         if let Some(want) = name_filter
-            && printer_name.as_deref().map(|p| !p.eq_ignore_ascii_case(want)).unwrap_or(true)
+            && printer_name
+                .as_deref()
+                .map(|p| !p.eq_ignore_ascii_case(want))
+                .unwrap_or(true)
         {
             continue;
         }
 
         let status = map_job_state(status_string.as_deref(), alerts.as_deref());
 
-        jobs.push(Job::from_lpstat(
+        jobs.push(Job::from_cups(
             job_id,
             printer_name,
             status,
             status_string,
+            None, // document - lpstat doesn't surface document/job title
             owner,
             submitted_time_raw,
+            None, // total_pages - lpstat doesn't expose page counters
+            None, // pages_printed
+            None, // name - WMI-only field
         ));
     }
 
@@ -118,11 +125,7 @@ fn parse_header(line: &str) -> Option<JobHeaderFields> {
             .unwrap_or(false)
         {
             start += 1;
-            if remainder
-                .get(start)
-                .map(|t| *t == "bytes")
-                .unwrap_or(false)
-            {
+            if remainder.get(start).map(|t| *t == "bytes").unwrap_or(false) {
                 start += 1;
             }
         }

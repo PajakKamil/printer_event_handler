@@ -26,9 +26,9 @@ pub use model::WmiStatusCodes;
 // Internal-to-crate re-export so `crate::backend` can name `Win32Printer`
 // via `crate::printer::Win32Printer` exactly as before the split.
 #[cfg(windows)]
-pub(crate) use model::Win32Printer;
-#[cfg(windows)]
 pub(crate) use job::Win32PrintJob;
+#[cfg(windows)]
+pub(crate) use model::Win32Printer;
 
 #[cfg(test)]
 mod tests {

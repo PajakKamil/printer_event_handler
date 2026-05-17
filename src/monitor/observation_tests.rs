@@ -77,6 +77,10 @@ impl PrinterBackend for ScriptedBackend {
             .current()
             .filter(|p| p.name().eq_ignore_ascii_case(name)))
     }
+
+    async fn list_jobs(&self, _printer_name: Option<&str>) -> crate::Result<Vec<crate::Job>> {
+        Ok(Vec::new())
+    }
 }
 
 fn monitor_with(backend: ScriptedBackend) -> PrinterMonitor {
@@ -363,8 +367,7 @@ async fn run_property_stream_filters_to_selected_property() {
 
     let a = make_printer("Obs", PrinterStatus::Idle, ErrorState::NoError, false);
     let b = make_printer("Obs", PrinterStatus::Printing, ErrorState::Jammed, false);
-    let backend =
-        ScriptedBackend::new(vec![Some(a.clone()), Some(a), Some(b.clone()), Some(b)]);
+    let backend = ScriptedBackend::new(vec![Some(a.clone()), Some(a), Some(b.clone()), Some(b)]);
     let monitor = monitor_with(backend);
     let cancel = CancellationToken::new();
 
@@ -391,7 +394,12 @@ async fn run_property_stream_filters_to_selected_property() {
 /// stringifying everything into `PrinterError::Other`.
 #[tokio::test]
 async fn monitor_multiple_surfaces_task_panicked_variant() {
-    let a = make_printer("PanicPrinter", PrinterStatus::Idle, ErrorState::NoError, false);
+    let a = make_printer(
+        "PanicPrinter",
+        PrinterStatus::Idle,
+        ErrorState::NoError,
+        false,
+    );
     let b = make_printer(
         "PanicPrinter",
         PrinterStatus::Printing,

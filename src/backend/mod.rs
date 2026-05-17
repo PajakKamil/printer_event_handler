@@ -8,6 +8,9 @@ mod lpstat_jobs;
 #[cfg(unix)]
 mod lpstat_reasons;
 
+#[cfg(all(unix, feature = "linux-libcups"))]
+mod libcups;
+
 /// Trait for platform-specific printer backend implementations
 #[async_trait]
 pub trait PrinterBackend: Send + Sync {
@@ -24,15 +27,13 @@ pub trait PrinterBackend: Send + Sync {
 
     /// List print jobs, optionally filtered to a single printer.
     ///
-    /// Default implementation returns `Ok(vec![])` so existing backend
-    /// implementations keep compiling without breaking changes. Backends that
-    /// can enumerate jobs should override this.
-    ///
     /// When `printer_name` is `Some(name)`, only jobs owned by that printer
     /// should be returned. `None` returns jobs from all printers.
-    async fn list_jobs(&self, _printer_name: Option<&str>) -> Result<Vec<Job>> {
-        Ok(Vec::new())
-    }
+    ///
+    /// In 2.0 this method is required of every backend implementation - the
+    /// default empty-vec impl from 1.5.0 is gone so that downstream backends
+    /// can't silently omit job tracking.
+    async fn list_jobs(&self, printer_name: Option<&str>) -> Result<Vec<Job>>;
 }
 
 /// Windows backend using WMI
@@ -198,9 +199,7 @@ async fn run_cups_command_with_timeout(
     let output = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
         .await
         .map_err(|_| {
-            crate::PrinterError::CupsError(format!(
-                "{program} timed out after {timeout_ms}ms"
-            ))
+            crate::PrinterError::CupsError(format!("{program} timed out after {timeout_ms}ms"))
         })??;
 
     if !output.status.success() {
@@ -460,7 +459,12 @@ async fn detect_printers_alternative() -> Result<Vec<Printer>> {
     Ok(printers)
 }
 
-/// Create the appropriate backend for the current platform
+/// Create the appropriate backend for the current platform.
+///
+/// On Linux/macOS, when the `linux-libcups` cargo feature is enabled, this
+/// returns the libcups FFI-backed [`libcups::LibCupsBackend`] instead of
+/// the default `lpstat`-subprocess-backed [`LinuxBackend`]. The default
+/// build keeps the lpstat path so no system libraries are required.
 pub async fn create_backend() -> Result<Box<dyn PrinterBackend>> {
     #[cfg(windows)]
     {
@@ -468,7 +472,13 @@ pub async fn create_backend() -> Result<Box<dyn PrinterBackend>> {
         Ok(Box::new(backend))
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "linux-libcups"))]
+    {
+        let backend = libcups::LibCupsBackend::new().await?;
+        Ok(Box::new(backend))
+    }
+
+    #[cfg(all(unix, not(feature = "linux-libcups")))]
     {
         let backend = LinuxBackend::new().await?;
         Ok(Box::new(backend))
@@ -677,8 +687,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn merge_alerts_promotes_toner_low_over_idle_header() {
-        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
-            .expect("header parses");
+        let header =
+            parse_lpstat_line("printer Foo is idle.  enabled since X").expect("header parses");
         let merged = merge_alerts(header, Some("toner-low-warning"));
         assert_eq!(merged.error_state(), &crate::ErrorState::LowToner);
         assert_eq!(merged.state(), Some(&crate::PrinterState::TonerLow));
@@ -690,8 +700,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn merge_alerts_picks_most_specific_cause() {
-        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
-            .expect("header parses");
+        let header =
+            parse_lpstat_line("printer Foo is idle.  enabled since X").expect("header parses");
         let merged = merge_alerts(header, Some("media-empty-warning,media-jam-error"));
         assert_eq!(merged.error_state(), &crate::ErrorState::Jammed);
         assert_eq!(merged.state(), Some(&crate::PrinterState::PaperJam));
@@ -702,8 +712,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn merge_alerts_none_leaves_header_untouched() {
-        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
-            .expect("header parses");
+        let header =
+            parse_lpstat_line("printer Foo is idle.  enabled since X").expect("header parses");
         let merged_none = merge_alerts(header.clone(), Some("none"));
         assert_eq!(merged_none.error_state(), &crate::ErrorState::NoError);
         assert!(merged_none.state().is_none());
