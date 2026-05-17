@@ -384,3 +384,49 @@ async fn run_property_stream_filters_to_selected_property() {
         .expect("stream must yield the filtered Status change");
     assert_eq!(change.property_name(), "Status");
 }
+
+/// F6 regression: when the per-printer callback panics, the join error
+/// must surface as a typed `PrinterError::TaskPanicked` carrying both the
+/// printer name and the panic payload - not the previous behaviour of
+/// stringifying everything into `PrinterError::Other`.
+#[tokio::test]
+async fn monitor_multiple_surfaces_task_panicked_variant() {
+    let a = make_printer("PanicPrinter", PrinterStatus::Idle, ErrorState::NoError, false);
+    let b = make_printer(
+        "PanicPrinter",
+        PrinterStatus::Printing,
+        ErrorState::NoError,
+        false,
+    );
+    let backend = ScriptedBackend::new(vec![Some(a), Some(b)]);
+    let monitor = monitor_with(backend);
+    let cancel = CancellationToken::new();
+
+    let result = timeout(
+        Duration::from_millis(TEST_RUN_DURATION_MS),
+        monitor.monitor_multiple_printers(
+            vec!["PanicPrinter".to_string()],
+            TEST_POLL_INTERVAL_MS,
+            Some(cancel.clone()),
+            |_changes| panic!("scripted panic for F6 regression"),
+        ),
+    )
+    .await
+    .expect("monitor must return within run window");
+
+    cancel.cancel();
+
+    match result {
+        Err(crate::PrinterError::TaskPanicked {
+            printer_name,
+            panic_message,
+        }) => {
+            assert_eq!(printer_name.as_deref(), Some("PanicPrinter"));
+            assert!(
+                panic_message.contains("scripted panic for F6 regression"),
+                "panic message should preserve the payload, got: {panic_message}"
+            );
+        }
+        other => panic!("expected TaskPanicked, got {other:?}"),
+    }
+}

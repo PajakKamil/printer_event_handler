@@ -8,12 +8,15 @@ A cross-platform Rust library for monitoring printer status and events on Window
 
 ## Features
 
-- **Cross-platform support** - Works on Windows (WMI) and Linux (CUPS)
-- **Real-time monitoring** - Monitor printer status changes with customizable intervals (millisecond precision)
-- **Printer discovery** - List and find printers on your system
-- **Async/await support** - Built on Tokio for efficient asynchronous operations
-- **Type-safe** - Strongly typed printer status and error states
-- **Library + CLI** - Use as a library in your projects or as a standalone CLI tool
+- **Cross-platform** - Windows (WMI) and Linux (CUPS) with a single async API.
+- **Fluent builder** - `MonitorBuilder` collapses interval/cancellation/property-filter/event-mode options behind one chainable entry point.
+- **Real-time monitoring** - millisecond polling, or sub-second event-driven monitoring on Windows via the optional `events` cargo feature (WMI `__InstanceModificationEvent`).
+- **Cancellable** - every monitor and backend query accepts a `tokio_util::sync::CancellationToken`.
+- **Stream API** - terminal methods return `tokio_stream::Stream<Item = PrinterChanges>` / `Stream<Item = PropertyChange>` for callers that prefer streams over callbacks.
+- **Print job tracking** - `list_jobs` returns typed `Job` / `JobStatus` values from `Win32_PrintJob` on Windows and `lpstat -l -o` on Linux.
+- **Rich Linux state** - CUPS `printer-state-reasons` parsed into the same `ErrorState` / `PrinterState` surface used on Windows (media-empty, toner-low, cover-open, jammed, etc.).
+- **Optional `serde` / `tracing`** - off by default; opt in via cargo features.
+- **Library + CLI** - use as a crate or as the `printer_monitor` binary.
 
 ## Quick Start
 
@@ -23,34 +26,33 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.4.0"
+printer_event_handler = "1.5.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
-### Basic Usage
+### Basic Listing
 
 ```rust
-use printer_event_handler::{PrinterMonitor, PrinterError};
+use printer_event_handler::{PrinterError, PrinterMonitor};
 
 #[tokio::main]
 async fn main() -> Result<(), PrinterError> {
-    // Create a printer monitor
     let monitor = PrinterMonitor::new().await?;
-    
-    // List all printers
-    let printers = monitor.list_printers().await?;
+
+    // Cancellable variant - pass None when you don't need cancellation.
+    let printers = monitor.list_printers_cancellable(None).await?;
     for printer in &printers {
-        println!("📄 {}: {}", printer.name(), printer.status_description());
+        println!("{}: {}", printer.name(), printer.status_description());
         if printer.has_error() {
-            println!("   ⚠️  Error: {}", printer.error_description());
+            println!("  Error: {}", printer.error_description());
         }
     }
-    
+
     Ok(())
 }
 ```
 
-### Monitor Printer Status Changes
+### Find a Specific Printer
 
 ```rust
 use printer_event_handler::PrinterMonitor;
@@ -58,205 +60,256 @@ use printer_event_handler::PrinterMonitor;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = PrinterMonitor::new().await?;
-    
-    // Monitor a specific printer every 30 seconds (interval in milliseconds)
-    monitor.monitor_printer("HP LaserJet Pro", 30000, |current, previous| {
-        if let Some(prev) = previous {
-            if prev != current {
-                println!("🔄 Status changed: {} → {}", 
-                    prev.status_description(), 
-                    current.status_description());
-                
-                if current.has_error() {
-                    println!("❌ Error detected: {}", current.error_description());
-                }
-            }
-        } else {
-            println!("📊 Initial status: {}", current.status_description());
-        }
-    }).await?;
-    
-    Ok(())
-}
-```
 
-### Find Specific Printer
-
-```rust
-use printer_event_handler::PrinterMonitor;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let monitor = PrinterMonitor::new().await?;
-    
-    match monitor.find_printer("Microsoft Print to PDF").await? {
+    match monitor.find_printer_cancellable("Microsoft Print to PDF", None).await? {
         Some(printer) => {
-            println!("Found printer: {}", printer.name());
-            println!("Status: {}", printer.status_description());
-            println!("Is default: {}", printer.is_default());
-            println!("Is offline: {}", printer.is_offline());
+            println!("Found: {}", printer.name());
+            println!("Status:  {}", printer.status_description());
+            println!("Default: {}", printer.is_default());
+            println!("Offline: {}", printer.is_offline());
         }
         None => println!("Printer not found"),
     }
-    
+
     Ok(())
 }
 ```
 
-### Check for Changes
+### Monitor With the Fluent Builder
+
+`PrinterMonitor::monitor(name)` returns a `MonitorBuilder` you can configure with chainable methods, then terminate with `run_changes` / `run_printer` / `run_property`:
 
 ```rust
-use printer_event_handler::PrinterMonitor;
-use tokio::time::{sleep, Duration};
+use printer_event_handler::{MonitorableProperty, PrinterMonitor};
+use tokio_util::sync::CancellationToken;
+
+const INTERVAL_MS: u64 = 30_000;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = PrinterMonitor::new().await?;
-    
-    // Get initial status
-    let initial = monitor.find_printer("Your Printer").await?;
-    
-    // Wait and check again
-    sleep(Duration::from_secs(5)).await;
-    let current = monitor.find_printer("Your Printer").await?;
-    
-    // Compare states
-    match (initial, current) {
-        (Some(before), Some(after)) if before != after => {
-            println!("Change detected!");
-            println!("Before: {}", before.status_description());
-            println!("After: {}", after.status_description());
-        }
-        (Some(_), Some(_)) => println!("No changes detected"),
-        _ => println!("Printer not found"),
-    }
-    
-    Ok(())
-}
-```
+    let cancel = CancellationToken::new();
 
-### Advanced Property Monitoring
-
-The library supports detailed property-level monitoring to detect specific changes:
-
-```rust
-use printer_event_handler::PrinterMonitor;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let monitor = PrinterMonitor::new().await?;
-    
-    // Monitor all property changes with detailed tracking
-    monitor.monitor_printer_changes("HP LaserJet", 30000, |changes| {
-        if changes.has_changes() {
-            println!("🔄 {} changes detected in '{}':", 
-                changes.change_count(), changes.printer_name);
-            
-            for change in &changes.changes {
-                println!("  - {}", change.description());
+    monitor
+        .monitor("HP LaserJet Pro")
+        .interval_ms(INTERVAL_MS)
+        .cancel_token(cancel.clone())
+        .run_changes(|changes| {
+            if changes.has_changes() {
+                println!(
+                    "{} property change(s) on {}",
+                    changes.change_count(),
+                    changes.printer_name,
+                );
+                for change in &changes.changes {
+                    println!("  - {}", change.description());
+                }
             }
-        }
-    }).await?;
-    
+        })
+        .await?;
+
     Ok(())
 }
 ```
 
-#### Monitor Specific Properties
-
-The library provides type-safe property monitoring using the `MonitorableProperty` enum:
+### Monitor a Single Property
 
 ```rust
-use printer_event_handler::{PrinterMonitor, MonitorableProperty};
+use printer_event_handler::{MonitorableProperty, PrinterMonitor};
+
+const INTERVAL_MS: u64 = 60_000;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor = PrinterMonitor::new().await?;
-    
-    // Monitor only offline status changes using type-safe enum
-    monitor.monitor_property("HP LaserJet", MonitorableProperty::IsOffline, 60000, |change| {
-        println!("📶 Offline status: {}", change.description());
-    }).await?;
-    
-    // Monitor printer status changes
-    monitor.monitor_property("HP LaserJet", MonitorableProperty::Status, 30000, |change| {
-        println!("🔄 Status changed: {}", change.description());
-    }).await?;
-    
+
+    monitor
+        .monitor("HP LaserJet")
+        .interval_ms(INTERVAL_MS)
+        .filter_property(MonitorableProperty::IsOffline)
+        .run_property(|change| println!("Offline flipped: {}", change.description()))
+        .await?;
+
     Ok(())
 }
 ```
 
-##### Available Properties to Monitor
+### Stream-Based Monitoring
 
-The `MonitorableProperty` enum provides type-safe access to all monitorable printer properties:
+`run_changes_stream` and `run_property_stream` return `tokio_stream::Stream` so you can pipe events through combinators instead of using a callback:
 
 ```rust
-pub enum MonitorableProperty {
-    Name,                            // Printer name changes
-    Status,                          // PrinterStatus enum changes (recommended)
-    State,                           // PrinterState enum changes (legacy Windows)
-    ErrorState,                      // ErrorState enum changes
-    IsOffline,                       // Online/offline status changes
-    IsDefault,                       // Default printer designation changes
-    PrinterStatusCode,               // Raw PrinterStatus code changes (1-7)
-    PrinterStateCode,                // Raw PrinterState code changes (.NET flags)
-    DetectedErrorStateCode,          // Raw DetectedErrorState code changes (0-11)
-    ExtendedDetectedErrorStateCode,  // Raw ExtendedDetectedErrorState code changes
-    ExtendedPrinterStatusCode,       // Raw ExtendedPrinterStatus code changes
-    WmiStatus,                       // WMI Status property changes
+use printer_event_handler::PrinterMonitor;
+use tokio_stream::StreamExt;
+
+const INTERVAL_MS: u64 = 1_000;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+
+    let mut stream = monitor
+        .monitor("HP LaserJet")
+        .interval_ms(INTERVAL_MS)
+        .run_changes_stream();
+
+    while let Some(changes) = stream.next().await {
+        println!("got {} change(s)", changes.change_count());
+    }
+
+    Ok(())
 }
 ```
 
-##### Multiple Printer Monitoring
+### Event-Driven Monitoring (Windows, opt-in)
 
-```rust
-// Monitor multiple printers concurrently
-let printer_names = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
-monitor.monitor_multiple_printers(printer_names, 30000, |changes| {
-    println!("🖨️  Multi-printer change: {} - {}", 
-        changes.printer_name, changes.summary());
-}).await?;
+With the `events` cargo feature enabled and on Windows, the builder can subscribe to WMI `__InstanceModificationEvent` notifications instead of polling. State changes propagate within ~1 second of the WMI report. On other targets or without the feature, `with_events(true)` is accepted silently and the builder falls back to polling.
+
+```toml
+[dependencies]
+printer_event_handler = { version = "1.5.0", features = ["events"] }
 ```
 
-### Millisecond Precision Intervals
-
-All monitoring functions accept intervals in **milliseconds**, providing precise control over monitoring frequency:
-
 ```rust
-// High-frequency monitoring (every 100ms)
-monitor.monitor_printer("Fast Printer", 100, |current, previous| {
-    // Handle rapid changes
-}).await?;
+use printer_event_handler::PrinterMonitor;
+use tokio_stream::StreamExt;
 
-// Standard monitoring (every 5 seconds)
-monitor.monitor_printer("Standard Printer", 5000, |current, previous| {
-    // Handle regular changes  
-}).await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
 
-// Low-frequency monitoring (every 2 minutes)
-monitor.monitor_printer("Slow Printer", 120000, |current, previous| {
-    // Handle infrequent changes
-}).await?;
+    let mut stream = monitor
+        .monitor("HP LaserJet")
+        .with_events(true)
+        .run_changes_stream();
+
+    while let Some(changes) = stream.next().await {
+        println!("event: {}", changes.summary());
+    }
+
+    Ok(())
+}
 ```
 
-**Common Intervals:**
-- `100` = 100ms (0.1 seconds) - High frequency
-- `500` = 500ms (0.5 seconds) - Responsive
-- `1000` = 1 second - Standard
-- `5000` = 5 seconds - Moderate
-- `30000` = 30 seconds - Conservative
-- `60000` = 1 minute - Low frequency
+### Monitoring Multiple Printers
+
+```rust
+use printer_event_handler::PrinterMonitor;
+
+const INTERVAL_MS: u64 = 30_000;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+    let names = vec!["HP LaserJet".to_string(), "Canon Printer".to_string()];
+
+    monitor
+        .monitor_multiple_printers(names, INTERVAL_MS, None, |changes| {
+            println!("{} - {}", changes.printer_name, changes.summary());
+        })
+        .await?;
+
+    Ok(())
+}
+```
+
+If a per-printer task panics, the call returns `PrinterError::TaskPanicked { printer_name, panic_message }` so you can match on the failing printer's name without parsing strings.
+
+### Print Job Tracking
+
+```rust
+use printer_event_handler::PrinterMonitor;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+
+    // None = all printers; Some(name) = only that printer's jobs.
+    let jobs = monitor.list_jobs(None, None).await?;
+    for job in jobs {
+        println!(
+            "job {} on {:?}: {:?} (owner {:?})",
+            job.job_id(),
+            job.printer_name(),
+            job.status(),
+            job.owner(),
+        );
+    }
+
+    Ok(())
+}
+```
+
+On Linux the parser reads `lpstat -l -o` and maps the `Status:` line plus IPP `job-state-reasons` into `JobStatus` (`Printing`, `Spooling`, `Paused`, `Complete`, `Deleted`, `Error`, ...).
+
+## Cargo Features
+
+| Feature           | Default | Effect                                                                                                              |
+|-------------------|---------|---------------------------------------------------------------------------------------------------------------------|
+| `rt-multi-thread` | on      | Pulls in tokio's multi-threaded runtime. Disable for library-only consumers that bring their own runtime.           |
+| `serde`           | off     | Adds `Serialize` / `Deserialize` derives to the public domain types (`Printer`, `Job`, status enums, change types). |
+| `tracing`         | off     | Routes library log calls through the `tracing` crate instead of `log`.                                              |
+| `events`          | off     | Windows-only event-driven monitoring via WMI `__InstanceModificationEvent`. Enables `MonitorBuilder::with_events`.  |
+
+Example:
+
+```toml
+printer_event_handler = { version = "1.5.0", default-features = false, features = ["serde", "tracing"] }
+tokio = { version = "1.0", features = ["macros", "rt"] }
+```
+
+## Cancellation
+
+Every monitor and the cancellable backend methods accept `Option<CancellationToken>`. Cancellation is checked both before each poll and inside the sleep `tokio::select!`, so it stays responsive mid-interval.
+
+```rust
+use printer_event_handler::PrinterMonitor;
+use tokio_util::sync::CancellationToken;
+
+const INTERVAL_MS: u64 = 5_000;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = PrinterMonitor::new().await?;
+    let cancel = CancellationToken::new();
+
+    let cancel_for_signal = cancel.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        cancel_for_signal.cancel();
+    });
+
+    monitor
+        .monitor("HP LaserJet")
+        .interval_ms(INTERVAL_MS)
+        .cancel_token(cancel)
+        .run_changes(|c| println!("{}", c.summary()))
+        .await?;
+
+    Ok(())
+}
+```
+
+`list_printers_cancellable` / `find_printer_cancellable` return `PrinterError::Cancelled` when the token wins the race.
+
+## Deprecations
+
+The pre-1.5.0 listing entry points are still callable but emit deprecation warnings; they will be removed in 2.0:
+
+- `PrinterMonitor::list_printers` -> use `list_printers_cancellable`.
+- `PrinterMonitor::find_printer` -> use `find_printer_cancellable`.
+
+Existing `monitor_printer` / `monitor_printer_changes` / `monitor_property` continue to work and are not deprecated; the `MonitorBuilder` is a convenience layer on top of them.
 
 ## CLI Usage
 
-The crate also provides a command-line interface:
+The crate ships a `printer_monitor` binary:
 
 ```bash
 # Install from crates.io
 cargo install printer_event_handler
 
-# Or run directly from source
+# Or run from source
 git clone https://github.com/PajakKamil/printer_event_handler
 cd printer_event_handler
 ```
@@ -267,7 +320,8 @@ cd printer_event_handler
 cargo run
 ```
 
-Output:
+Sample output:
+
 ```
 Printer Status Checker
 ======================
@@ -296,68 +350,113 @@ Printer #3: Microsoft Print to PDF
 cargo run -- "HP LaserJet Pro"
 ```
 
-Output:
+Sample output:
+
 ```
 Printer Status Monitor Service
 ==============================
 Monitoring printer 'HP LaserJet Pro' every 60 seconds...
 Press Ctrl+C to stop
 
-[2024-01-15 14:30:15] Printer 'HP LaserJet Pro' Initial Status:
+[2026-05-17 14:30:15] Printer 'HP LaserJet Pro' Initial Status:
   Status: Idle
   Error State: No Error
   Offline: No
 
-[2024-01-15 14:31:15] Checking printer 'HP LaserJet Pro'
-[2024-01-15 14:32:15] Printer 'HP LaserJet Pro' Status Changed:
+[2026-05-17 14:31:15] Checking printer 'HP LaserJet Pro'
+[2026-05-17 14:32:15] Printer 'HP LaserJet Pro' Status Changed:
   Status: Idle -> Printing
-  Error State: No Error -> No Error
-  Offline: No
-
-[2024-01-15 14:33:15] Printer 'HP LaserJet Pro' Status Changed:
-  Status: Printing -> Busy
   Error State: No Error -> No Error
   Offline: No
 ```
 
 ## Platform Support
 
-| Platform | Backend | Requirements | Coverage |
-|----------|---------|--------------|----------|
-| **Windows** | WMI (Windows Management Instrumentation) | None (built-in) | **Complete Win32_Printer support** - Full .NET PrintQueueStatus flag support (values like 1024, 16384) and 12 DetectedErrorState values (0-11) https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printer |
-| **Linux** | CUPS (Common Unix Printing System) | `cups-client` package recommended | Basic status detection (idle, printing, offline) with CUPS integration |
+| Platform    | Backend                            | Requirements                       | Coverage                                                                                                                                                                                                                                              |
+|-------------|------------------------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Windows** | WMI (Win32_Printer + Win32_PrintJob) | None (built-in)                  | Full .NET PrintQueueStatus flag support and 12 DetectedErrorState values (0-11). Optional event-driven monitoring via `__InstanceModificationEvent` (cargo feature `events`). Print jobs via WMI. |
+| **Linux**   | CUPS (`lpstat`)                    | `cups-client` package recommended  | Status from `lpstat -l -p`, including IPP `printer-state-reasons` mapped to typed `ErrorState` / `PrinterState`. Print jobs via `lpstat -l -o`. Subprocess calls run under `LANG=C` with a 5-second timeout. |
 
 ### Linux Setup
 
-On Ubuntu/Debian:
+Ubuntu/Debian:
+
 ```bash
 sudo apt install cups
 ```
 
-On RHEL/CentOS/Fedora:
+RHEL/CentOS/Fedora:
+
 ```bash
-sudo yum install cups  # or dnf install cups-client
+sudo yum install cups   # or: sudo dnf install cups-client
 ```
 
 ## API Reference
 
 ### Core Types
 
-- **`PrinterMonitor`** - Main entry point for all printer operations
-- **`Printer`** - Represents a printer with complete WMI information and current state
-- **`MonitorableProperty`** - Type-safe enum for specifying properties to monitor
-- **`PrinterStatus`** - Printer status enum (current property, values 1-7)
-- **`PrinterState`** - Printer state enum (.NET PrintQueueStatus flags like 1024, 16384)
-- **`ErrorState`** - Error condition enum (NoError, Jammed, NoPaper, etc.)
-- **`PrinterError`** - Error type for all operations
+- **`PrinterMonitor`** - main entry point. Cheaply `Clone`able (`Arc<dyn PrinterBackend>` inside) so multiple tasks can share one backend connection.
+- **`MonitorBuilder`** - fluent configuration for per-printer monitoring runs.
+- **`Printer`** - represents a printer plus all platform-specific raw codes.
+- **`Job`** / **`JobStatus`** - typed print-job snapshot returned by `list_jobs`.
+- **`MonitorableProperty`** - type-safe enum naming each monitorable property.
+- **`PrinterStatus`** - operational status enum (values 1-7).
+- **`PrinterState`** - .NET PrintQueueStatus flags (`PaperJam`, `TonerLow`, `DoorOpen`, ...).
+- **`ErrorState`** - DetectedErrorState enum (`NoError`, `Jammed`, `NoPaper`, ...).
+- **`PrinterChanges`** / **`PropertyChange`** - diff types emitted by change monitors.
+- **`PrinterError`** - error enum (`WmiError`, `CupsError`, `PrinterNotFound`, `PlatformNotSupported`, `IoError`, `Cancelled`, `TaskPanicked { printer_name, panic_message }`, `Other`).
+- **`CancellationToken`** - re-exported from `tokio_util::sync` for convenience.
 
-### Complete WMI Property Access
+### MonitorBuilder Methods
 
-The `Printer` struct provides comprehensive access to all Win32_Printer WMI properties:
+| Method                         | Effect                                                                                                                          |
+|--------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `interval_ms(ms)`              | Polling interval. Default: 60 000 ms.                                                                                           |
+| `cancel_token(token)`          | Attach a `CancellationToken`.                                                                                                   |
+| `wait_for_appearance(bool)`    | When `false`, return `PrinterError::PrinterNotFound` on the first poll if the printer is missing. Default `true` (wait silently). |
+| `filter_property(prop)`        | Required by `run_property` / `run_property_stream`. Filters change events to a single property.                                 |
+| `with_events(bool)`            | Use WMI event subscription when on Windows with `events` feature; falls back to polling otherwise.                              |
+| `run_changes(callback)`        | Callback receives a `PrinterChanges` per poll that detected mutations.                                                          |
+| `run_printer(callback)`        | Callback receives `(current, previous)` snapshots.                                                                              |
+| `run_property(callback)`       | Callback receives a single `PropertyChange` matching `filter_property`.                                                         |
+| `run_changes_stream()`         | Returns `Stream<Item = PrinterChanges>`.                                                                                        |
+| `run_property_stream()`        | Returns `Result<Stream<Item = PropertyChange>>` (errors if `filter_property` was not set).                                      |
 
-#### Raw Status Code Methods
+### Available Properties to Monitor
+
 ```rust
-// Get numeric WMI status codes
+pub enum MonitorableProperty {
+    Name,                            // Printer name changes
+    Status,                          // PrinterStatus enum changes (recommended)
+    State,                           // PrinterState enum changes
+    ErrorState,                      // ErrorState enum changes
+    IsOffline,                       // Online/offline status changes
+    IsDefault,                       // Default printer designation changes
+    PrinterStatusCode,               // Raw PrinterStatus code changes (1-7)
+    PrinterStateCode,                // Raw PrinterState code changes
+    DetectedErrorStateCode,          // Raw DetectedErrorState code changes (0-11)
+    ExtendedDetectedErrorStateCode,  // Raw ExtendedDetectedErrorState code changes
+    ExtendedPrinterStatusCode,       // Raw ExtendedPrinterStatus code changes
+    WmiStatus,                       // WMI Status property changes
+}
+```
+
+### Polling Intervals
+
+All monitoring functions take an interval in **milliseconds**. Common values:
+
+- `100` - 0.1 s, high frequency
+- `500` - 0.5 s, responsive
+- `1000` - 1 s, standard
+- `5000` - 5 s, moderate
+- `30000` - 30 s, conservative
+- `60000` - 1 minute, low frequency
+
+### Raw WMI Property Access (Windows)
+
+`Printer` preserves the raw WMI codes alongside the typed enums:
+
+```rust
 printer.printer_status_code()                    // Option<u32> - PrinterStatus (1-7)
 printer.printer_state_code()                     // Option<u32> - PrinterState (.NET PrintQueueStatus flags)
 printer.detected_error_state_code()              // Option<u32> - DetectedErrorState (0-11)
@@ -366,55 +465,54 @@ printer.extended_detected_error_state_code()     // Option<u32> - ExtendedDetect
 printer.wmi_status()                             // Option<&str> - Status property
 ```
 
-#### Human-Readable Description Methods
-```rust
-// Get human-readable descriptions for status codes
-printer.printer_status_description()             // Option<&'static str>
-printer.printer_state_description()              // Option<&'static str>
-printer.detected_error_state_description()       // Option<&'static str>
-printer.extended_printer_status_description()    // Option<&'static str>
-```
+Each one has a matching `*_description()` helper that returns a human-readable `&'static str`.
 
 #### WMI Status Values
-The `wmi_status()` method returns the WMI Status property with values like:
-- `"OK"` - Normal functioning
-- `"Degraded"` - Functioning but with issues
-- `"Error"` - Has problems
-- `"Unknown"` - Cannot determine status
-- `"No Contact"` - Communication lost
-- And others per Microsoft documentation
 
-#### Example: Detailed Printer Analysis
+`wmi_status()` mirrors Microsoft's documented Status values:
+
+- `"OK"` - normal functioning
+- `"Degraded"` - functioning with issues
+- `"Error"` - has problems
+- `"Unknown"` - cannot determine status
+- `"No Contact"` - communication lost
+
+#### Example: Detailed Analysis
+
 ```rust
-let printer = monitor.find_printer("HP Printer").await?.unwrap();
+let printer = monitor
+    .find_printer_cancellable("HP Printer", None)
+    .await?
+    .expect("printer present");
 
-// Processed high-level information
-println!("Name: {}", printer.name());
-println!("Status: {}", printer.status_description());
+println!("Name:    {}", printer.name());
+println!("Status:  {}", printer.status_description());
 println!("Offline: {}", printer.is_offline());
 
-// Raw WMI analysis
 println!("--- WMI Details ---");
 if let Some(code) = printer.printer_status_code() {
-    println!("PrinterStatus: {} ({})", code, 
-        printer.printer_status_description().unwrap_or("Unknown"));
+    println!(
+        "PrinterStatus: {} ({})",
+        code,
+        printer.printer_status_description().unwrap_or("Unknown"),
+    );
 }
-
 if let Some(code) = printer.extended_printer_status_code() {
-    println!("ExtendedPrinterStatus: {} ({})", code,
-        printer.extended_printer_status_description().unwrap_or("Unknown"));
+    println!(
+        "ExtendedPrinterStatus: {} ({})",
+        code,
+        printer.extended_printer_status_description().unwrap_or("Unknown"),
+    );
 }
-
 if let Some(status) = printer.wmi_status() {
     println!("WMI Status: {}", status);
 }
 ```
 
-### Printer Status Values
-
-The library provides comprehensive support for all Win32_Printer states:
+### Status Enums
 
 #### PrinterStatus (Current Property, Values 1-7)
+
 ```rust
 pub enum PrinterStatus {
     Other,           // Other status (1)
@@ -429,7 +527,8 @@ pub enum PrinterStatus {
 ```
 
 #### PrinterState (.NET PrintQueueStatus Flags)
-Based on [.NET System.Printing.PrintQueueStatus](https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus):
+
+Based on [.NET System.Printing.PrintQueueStatus](https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus). The Linux backend now feeds the same enum via IPP `printer-state-reasons`.
 
 ```rust
 pub enum PrinterState {
@@ -463,74 +562,64 @@ pub enum PrinterState {
 }
 ```
 
-**Note**: The PrinterState values are bitwise flags, so multiple states can be active simultaneously. The library automatically selects the most significant/priority state for display.
+**Note**: PrinterState values are bitwise flags, so multiple states can be active simultaneously. The library picks the most informative single variant via a priority chain (specific causes such as `PaperJam` or `DoorOpen` win over the generic `Error` bit).
 
-### Error States
-
-Complete support for Win32_Printer DetectedErrorState values:
+#### ErrorState (Win32_Printer DetectedErrorState Values)
 
 ```rust
 pub enum ErrorState {
-    NoError,         // No issues (values 0, 2)
-    Other,           // Other error (values 1, 9)
-    LowPaper,        // Low paper (value 3)
-    NoPaper,         // Out of paper (value 4)
-    LowToner,        // Low toner/ink (value 5)
-    NoToner,         // Out of toner/ink (value 6)
-    DoorOpen,        // Cover/door open (value 7)
-    Jammed,          // Paper jam (value 8)
-    ServiceRequested,// Needs maintenance (value 10)
-    OutputBinFull,   // Output tray full (value 11)
-    UnknownError,    // Unknown error state
+    NoError,          // No issues (values 0, 2)
+    Other,            // Other error (values 1, 9)
+    LowPaper,         // Low paper (value 3)
+    NoPaper,          // Out of paper (value 4)
+    LowToner,         // Low toner/ink (value 5)
+    NoToner,          // Out of toner/ink (value 6)
+    DoorOpen,         // Cover/door open (value 7)
+    Jammed,           // Paper jam (value 8)
+    ServiceRequested, // Needs maintenance (value 10)
+    OutputBinFull,    // Output tray full (value 11)
+    UnknownError,     // Unknown error state
 }
 ```
 
 ## Examples
 
-Check out the [examples](examples/) directory for comprehensive usage patterns with complete WMI property access:
+The [examples](examples/) directory holds runnable usage patterns. Examples have their own `Cargo.toml` to keep the main library lightweight.
 
-- [`basic_listing.rs`](examples/basic_listing.rs) - List all printers with detailed WMI information
-- [`monitor_changes.rs`](examples/monitor_changes.rs) - Monitor status changes with WMI details
-- [`property_monitoring.rs`](examples/property_monitoring.rs) - Advanced property-level change detection
-- [`error_handling.rs`](examples/error_handling.rs) - Proper error handling and graceful degradation
-- [`async_patterns.rs`](examples/async_patterns.rs) - Advanced async usage and concurrent monitoring
+- [`basic_listing.rs`](examples/basic_listing.rs) - list all printers with detailed information.
+- [`monitor_changes.rs`](examples/monitor_changes.rs) - monitor status changes over time.
+- [`property_monitoring.rs`](examples/property_monitoring.rs) - property-level change detection.
+- [`error_handling.rs`](examples/error_handling.rs) - graceful error handling.
+- [`async_patterns.rs`](examples/async_patterns.rs) - concurrent monitoring patterns.
+- [`cancellation_token_example.rs`](examples/cancellation_token_example.rs) - graceful shutdown via `CancellationToken`.
 
-### Running Examples
-Examples have their own Cargo.toml to keep the main library lightweight:
+Run from the repo root:
 
-```bash
-cd examples
-cargo run --bin basic_listing
-cargo run --bin monitor_changes -- "Printer Name"
-```
-
-Or from the main directory:
 ```bash
 cargo run --manifest-path examples/Cargo.toml --bin basic_listing
+cargo run --manifest-path examples/Cargo.toml --bin monitor_changes -- "Printer Name"
 ```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
 ### Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/PajakKamil/printer_event_handler
 cd printer_event_handler
 
-# Run tests
 cargo test
-
-# Check formatting
 cargo fmt
-
-# Run linter
-cargo clippy
-
-# Build documentation
+cargo clippy -- -D warnings
 cargo doc --open
+
+# Feature combinations
+cargo test --features serde
+cargo build --features tracing
+cargo build --features events     # Windows only
+cargo build --no-default-features --lib
 ```
 
 ## License

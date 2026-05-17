@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-17
+
+### Added
+
+#### Cargo Feature Flags
+- **`rt-multi-thread` feature** (default-on) - tokio's multi-threaded runtime is now opt-in via this feature so library-only consumers can skip it. Existing users see no behaviour change because it ships enabled by default.
+- **`serde` feature** - opt-in `Serialize`/`Deserialize` derives on public domain types (`Printer`, `PrinterStatus`, `PrinterState`, `ErrorState`, `PropertyChange`, `PrinterChanges`, `PrinterSummary`, `MonitorableProperty`, `Job`, `JobStatus`).
+- **`tracing` feature** - opt-in routing of library log calls through the `tracing` crate instead of `log`.
+- **`events` feature** (Windows only) - opt-in event-driven monitoring backed by WMI `__InstanceModificationEvent` subscriptions for sub-second printer-state change detection.
+
+#### Fluent Monitor Builder
+- **`PrinterMonitor::monitor(name) -> MonitorBuilder`** - chainable entry point for per-printer monitoring runs.
+- **`MonitorBuilder` configuration** - `interval_ms`, `cancel_token`, `wait_for_appearance`, `filter_property`, `with_events`.
+- **Terminal methods** - callback-based `run_changes`, `run_printer`, `run_property`; stream-based `run_changes_stream`, `run_property_stream` returning `tokio_stream::Stream`.
+
+#### Cancellable Backend Queries
+- **`PrinterMonitor::list_printers_cancellable(cancel)`** - cancellable listing.
+- **`PrinterMonitor::find_printer_cancellable(name, cancel)`** - cancellable lookup.
+- **`PrinterError::Cancelled`** variant - distinguishes a user-requested cancellation from a backend failure.
+
+#### Print Job Tracking
+- **`PrinterMonitor::list_jobs(printer_name, cancel)`** plus `Job` / `JobStatus` types - enumerate active print jobs cross-platform.
+- **Windows** - reads `Win32_PrintJob` via WMI through a shared thread-local connection.
+- **Linux** - parses `lpstat -l -o`; resolves `JobStatus` from `Status:` text and IPP `job-state-reasons` alerts.
+
+#### Richer Linux State (M5)
+- **`printer-state-reasons` parsing** - Linux backend now reads CUPS `Alerts:` continuation lines from `lpstat -l -p` and maps IPP reason tokens (`media-empty`, `toner-low`, `cover-open`, `media-jam`, `output-area-full`, `offline`, etc.) to typed `ErrorState` and `PrinterState` flag bits. Linux printers no longer surface as just `Idle / Printing / Offline`.
+
+#### Linux Subprocess Hardening (B6 / B7 / F9 / F10)
+- **Subprocess timeouts** - every `lpstat` invocation now runs inside `tokio::time::timeout` against a 5-second budget; a hung CUPS daemon surfaces as `PrinterError::CupsError` instead of blocking the monitor forever.
+- **Locale-stable output** - all CUPS subprocesses spawn with `LANG=C` / `LC_ALL=C` so parsers never break under non-English user locales.
+
+#### `PrinterError::TaskPanicked` (F6)
+- **Typed panic surface** - `monitor_multiple_printers` now returns `PrinterError::TaskPanicked { printer_name, panic_message }` when a per-printer task panics, instead of stringifying the failure into `PrinterError::Other`. The panicking printer's name is preserved via `JoinSet::Id` correlation.
+
+#### Miscellaneous
+- **`PrinterMonitor::printer_summary_iter`** - iterator variant of `printer_summary` for callers that don't want a `HashMap` allocation.
+
+### Changed
+- **tokio runtime feature** - `rt-multi-thread` is now exposed as a same-named cargo feature on the library (default-on). The binary target keeps `required-features = ["rt-multi-thread"]` so it always has a runtime.
+- **`PrinterState::from_u32`** is now cross-platform (was Windows-only); the Linux backend uses it to interpret bits derived from IPP `printer-state-reasons`. This is a pure logic change with no API impact.
+- **Library log calls** route through an internal `pe_info!` / `pe_warn! `/ `pe_error!` facade that switches between `log::` and `tracing::` based on the `tracing` cargo feature.
+
+### Deprecated
+- **`PrinterMonitor::list_printers`** - use `list_printers_cancellable` instead. Removal planned for 2.0.
+- **`PrinterMonitor::find_printer`** - use `find_printer_cancellable` instead. Removal planned for 2.0.
+
+### Notes
+- **Additive enum variants** - `PrinterError` gained `Cancelled` and `TaskPanicked` this release. The enum is not yet `#[non_exhaustive]` (planned for 2.0), so downstream code that `match`es `PrinterError` exhaustively without a wildcard arm will need a wildcard added when upgrading from 1.4.x.
+- **No public API removals** - everything from 1.4.x continues to compile; only the two deprecation warnings above will fire on legacy call sites.
+
+### Dependencies
+- **tokio-stream 0.1** - added for the `Stream<Item = PrinterChanges>` / `Stream<Item = PropertyChange>` terminals.
+- **tracing 0.1** (optional) - added behind the `tracing` cargo feature.
+
 ## [1.4.0] - 2025-01-06
 
 ### Added

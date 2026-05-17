@@ -10,7 +10,7 @@ mod change;
 mod error_state;
 mod job;
 mod model;
-mod state;
+pub(crate) mod state;
 mod status;
 
 pub use change::{PrinterChanges, PropertyChange};

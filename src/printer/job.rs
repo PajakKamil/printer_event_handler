@@ -9,20 +9,34 @@ use serde::Deserialize;
 
 // Win32_PrintJob.JobStatus bitmask values (documented at
 // https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-printjob).
-// Used by `JobStatus::from_u32`. Kept `pub(crate)` so backend code can also
-// reference them if needed.
+// Used by `JobStatus::from_u32`. Gated to Windows because the bitmask is a
+// Windows-specific encoding - the Linux backend derives `JobStatus` from
+// the IPP `job-state-reasons` text instead.
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_PAUSED: u32 = 0x0000_0001;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_ERROR: u32 = 0x0000_0002;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_DELETING: u32 = 0x0000_0004;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_SPOOLING: u32 = 0x0000_0008;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_PRINTING: u32 = 0x0000_0010;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_OFFLINE: u32 = 0x0000_0020;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_PAPEROUT: u32 = 0x0000_0040;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_PRINTED: u32 = 0x0000_0080;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_DELETED: u32 = 0x0000_0100;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_BLOCKED_DEVQ: u32 = 0x0000_0200;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_USER_INTERVENTION: u32 = 0x0000_0400;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_RESTART: u32 = 0x0000_0800;
+#[cfg(windows)]
 pub(crate) const JOB_STATUS_COMPLETE: u32 = 0x0000_1000;
 
 /// High-level status of a print job, parsed from the
@@ -186,6 +200,37 @@ impl Job {
             pages_printed: None,
             time_submitted_raw: None,
             owner: None,
+            printer_name,
+        }
+    }
+
+    /// Constructs a [`Job`] from CUPS `lpstat -l -o` output.
+    ///
+    /// CUPS doesn't expose `Win32_PrintJob`'s page counters (`total_pages` /
+    /// `pages_printed`), so those stay `None`. `job_status_code` is also
+    /// `None` because CUPS has no equivalent bitmask - the parsed text from
+    /// the `Status:` line is preserved in `status_string`, and the resolved
+    /// enum lives in `status`.
+    #[cfg(unix)]
+    pub(crate) fn from_lpstat(
+        job_id: u32,
+        printer_name: Option<String>,
+        status: JobStatus,
+        status_string: Option<String>,
+        owner: Option<String>,
+        time_submitted_raw: Option<String>,
+    ) -> Self {
+        Self {
+            job_id,
+            name: None,
+            document: None,
+            status_string,
+            status,
+            job_status_code: None,
+            total_pages: None,
+            pages_printed: None,
+            time_submitted_raw,
+            owner,
             printer_name,
         }
     }

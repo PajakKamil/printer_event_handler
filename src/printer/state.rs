@@ -6,31 +6,31 @@ use super::status::PrinterStatus;
 // `pub(super)` so sibling `model::Printer::printer_state_description` can read
 // them without re-defining the constants.
 // Reference: https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus
-pub(super) const PRINTER_STATE_PAUSED: u32 = 1;
-pub(super) const PRINTER_STATE_ERROR: u32 = 2;
-pub(super) const PRINTER_STATE_PENDING_DELETION: u32 = 4;
-pub(super) const PRINTER_STATE_PAPER_JAM: u32 = 8;
-pub(super) const PRINTER_STATE_PAPER_OUT: u32 = 16;
-pub(super) const PRINTER_STATE_MANUAL_FEED: u32 = 32;
-pub(super) const PRINTER_STATE_PAPER_PROBLEM: u32 = 64;
-pub(super) const PRINTER_STATE_OFFLINE: u32 = 128;
-pub(super) const PRINTER_STATE_IO_ACTIVE: u32 = 256;
-pub(super) const PRINTER_STATE_BUSY: u32 = 512;
-pub(super) const PRINTER_STATE_PRINTING: u32 = 1024;
-pub(super) const PRINTER_STATE_OUTPUT_BIN_FULL: u32 = 2048;
-pub(super) const PRINTER_STATE_NOT_AVAILABLE: u32 = 4096;
-pub(super) const PRINTER_STATE_WAITING: u32 = 8192;
-pub(super) const PRINTER_STATE_PROCESSING: u32 = 16_384;
-pub(super) const PRINTER_STATE_INITIALIZING: u32 = 32_768;
-pub(super) const PRINTER_STATE_WARMING_UP: u32 = 65_536;
-pub(super) const PRINTER_STATE_TONER_LOW: u32 = 131_072;
-pub(super) const PRINTER_STATE_NO_TONER: u32 = 262_144;
-pub(super) const PRINTER_STATE_PAGE_PUNT: u32 = 524_288;
-pub(super) const PRINTER_STATE_USER_INTERVENTION_REQUIRED: u32 = 1_048_576;
-pub(super) const PRINTER_STATE_OUT_OF_MEMORY: u32 = 2_097_152;
-pub(super) const PRINTER_STATE_DOOR_OPEN: u32 = 4_194_304;
-pub(super) const PRINTER_STATE_SERVER_UNKNOWN: u32 = 8_388_608;
-pub(super) const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
+pub(crate) const PRINTER_STATE_PAUSED: u32 = 1;
+pub(crate) const PRINTER_STATE_ERROR: u32 = 2;
+pub(crate) const PRINTER_STATE_PENDING_DELETION: u32 = 4;
+pub(crate) const PRINTER_STATE_PAPER_JAM: u32 = 8;
+pub(crate) const PRINTER_STATE_PAPER_OUT: u32 = 16;
+pub(crate) const PRINTER_STATE_MANUAL_FEED: u32 = 32;
+pub(crate) const PRINTER_STATE_PAPER_PROBLEM: u32 = 64;
+pub(crate) const PRINTER_STATE_OFFLINE: u32 = 128;
+pub(crate) const PRINTER_STATE_IO_ACTIVE: u32 = 256;
+pub(crate) const PRINTER_STATE_BUSY: u32 = 512;
+pub(crate) const PRINTER_STATE_PRINTING: u32 = 1024;
+pub(crate) const PRINTER_STATE_OUTPUT_BIN_FULL: u32 = 2048;
+pub(crate) const PRINTER_STATE_NOT_AVAILABLE: u32 = 4096;
+pub(crate) const PRINTER_STATE_WAITING: u32 = 8192;
+pub(crate) const PRINTER_STATE_PROCESSING: u32 = 16_384;
+pub(crate) const PRINTER_STATE_INITIALIZING: u32 = 32_768;
+pub(crate) const PRINTER_STATE_WARMING_UP: u32 = 65_536;
+pub(crate) const PRINTER_STATE_TONER_LOW: u32 = 131_072;
+pub(crate) const PRINTER_STATE_NO_TONER: u32 = 262_144;
+pub(crate) const PRINTER_STATE_PAGE_PUNT: u32 = 524_288;
+pub(crate) const PRINTER_STATE_USER_INTERVENTION_REQUIRED: u32 = 1_048_576;
+pub(crate) const PRINTER_STATE_OUT_OF_MEMORY: u32 = 2_097_152;
+pub(crate) const PRINTER_STATE_DOOR_OPEN: u32 = 4_194_304;
+pub(crate) const PRINTER_STATE_SERVER_UNKNOWN: u32 = 8_388_608;
+pub(crate) const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
 
 /// Represents a printer's state using .NET PrintQueueStatus flags
 ///
@@ -70,10 +70,12 @@ pub enum PrinterState {
 }
 
 impl PrinterState {
-    /// Creates a PrinterState from a WMI PrinterState value.
+    /// Creates a PrinterState from a bitwise .NET PrintQueueStatus value.
     ///
     /// # Arguments
     /// * `state` - WMI Win32_Printer.PrinterState value (actually .NET PrintQueueStatus flags)
+    ///   on Windows, or an OR'd combination of `PRINTER_STATE_*` constants derived from CUPS
+    ///   `printer-state-reasons` tokens on Unix.
     ///
     /// # Returns
     /// Corresponding PrinterState enum variant for the most informative flag.
@@ -81,7 +83,6 @@ impl PrinterState {
     /// Specific-cause bits (e.g. PaperJam, NoToner, DoorOpen) are checked before
     /// the generic `Error` flag because WMI typically OR's both together; returning
     /// the specific cause preserves information for the caller.
-    #[cfg(windows)]
     pub(crate) fn from_u32(state: u32) -> Self {
         if state == 0 {
             return PrinterState::None;
@@ -343,7 +344,6 @@ mod tests {
         assert!(!PrinterState::None.is_offline());
     }
 
-    #[cfg(windows)]
     #[test]
     fn test_printer_state_from_u32_bitwise_flags() {
         // Test individual flags

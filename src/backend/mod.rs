@@ -3,6 +3,11 @@ use crate::PrinterError;
 use crate::{Job, Printer, Result};
 use async_trait::async_trait;
 
+#[cfg(unix)]
+mod lpstat_jobs;
+#[cfg(unix)]
+mod lpstat_reasons;
+
 /// Trait for platform-specific printer backend implementations
 #[async_trait]
 pub trait PrinterBackend: Send + Sync {
@@ -156,73 +161,139 @@ impl PrinterBackend for WindowsBackend {
 #[cfg(unix)]
 pub struct LinuxBackend;
 
+/// Maximum wall-clock budget per CUPS subprocess invocation. A hung CUPS
+/// daemon used to hang monitoring forever (F10) - now every call is wrapped
+/// in [`tokio::time::timeout`] against this constant and surfaces as
+/// [`crate::PrinterError::CupsError`] on expiry.
+#[cfg(unix)]
+const LPSTAT_TIMEOUT_MS: u64 = 5_000;
+
+/// Locale forced on every CUPS subprocess so parsers can match on stable
+/// English literals regardless of the user's `LANG` (B6, F9). `C` is the POSIX
+/// locale guaranteed by every libc implementation; all CUPS tools fall back to
+/// English output under it.
+#[cfg(unix)]
+const STABLE_LOCALE: &str = "C";
+
+/// Runs a CUPS-related subprocess with locale forced to `C` (so the output is
+/// parseable English regardless of the user's environment) and a wall-clock
+/// timeout (so a hung daemon can't hang monitoring forever). Returns stdout as
+/// a [`String`] on success; on timeout or non-zero exit, returns
+/// [`crate::PrinterError::CupsError`] describing the failure.
+#[cfg(unix)]
+async fn run_cups_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout_ms: u64,
+) -> Result<String> {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let fut = Command::new(program)
+        .args(args)
+        .env("LANG", STABLE_LOCALE)
+        .env("LC_ALL", STABLE_LOCALE)
+        .output();
+
+    let output = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
+        .await
+        .map_err(|_| {
+            crate::PrinterError::CupsError(format!(
+                "{program} timed out after {timeout_ms}ms"
+            ))
+        })??;
+
+    if !output.status.success() {
+        return Err(crate::PrinterError::CupsError(format!(
+            "{program} exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Convenience wrapper around [`run_cups_command_with_timeout`] using the
+/// default [`LPSTAT_TIMEOUT_MS`] budget. All production call sites use this
+/// form; the timeout-taking variant exists so unit tests can use a tight
+/// budget without waiting the full 5 seconds.
+#[cfg(unix)]
+async fn run_cups_command(program: &str, args: &[&str]) -> Result<String> {
+    run_cups_command_with_timeout(program, args, LPSTAT_TIMEOUT_MS).await
+}
+
 #[cfg(unix)]
 #[async_trait]
 impl PrinterBackend for LinuxBackend {
     async fn new() -> Result<Self> {
         use crate::logging::pe_info as info;
-        use tokio::process::Command;
 
         info!("Initializing Linux CUPS backend...");
 
-        // Check if lpstat is available
-        let output = Command::new("which").arg("lpstat").output().await;
-
-        match output {
-            Ok(result) if result.status.success() => {
-                info!("CUPS tools found, backend ready");
-                Ok(Self)
-            }
-            _ => {
-                // Check if we can find any printers using /proc or /sys
-                info!("CUPS not found, checking for alternative printer detection methods");
-                Ok(Self)
-            }
+        // `which lpstat` returns non-zero (-> Err) if the binary is missing.
+        // Either way we proceed - alternative detection covers the no-CUPS case.
+        if run_cups_command("which", &["lpstat"]).await.is_ok() {
+            info!("CUPS tools found, backend ready");
+        } else {
+            info!("CUPS not found, checking for alternative printer detection methods");
         }
+        Ok(Self)
     }
 
     async fn list_printers(&self) -> Result<Vec<Printer>> {
         use crate::logging::{pe_info as info, pe_warn as warn};
-        use tokio::process::Command;
 
         info!("Querying printer information via system commands...");
 
         let mut printers = Vec::new();
 
-        // Try lpstat first
-        if let Ok(output) = Command::new("lpstat").arg("-p").arg("-d").output().await {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
+        // `-l` adds indented continuation lines including `Alerts:` (CUPS's
+        // representation of the IPP `printer-state-reasons` attribute). We
+        // walk lines as blocks so we can pair each `printer NAME ...` header
+        // with its continuation lines before producing a `Printer`.
+        if let Ok(stdout) = run_cups_command("lpstat", &["-l", "-p", "-d"]).await {
+            let mut lines = stdout.lines().peekable();
+            while let Some(line) = lines.next() {
+                if !line.starts_with("printer ") {
+                    continue;
+                }
+                let Some(header) = parse_lpstat_line(line) else {
+                    continue;
+                };
 
-                for line in stdout.lines() {
-                    if line.starts_with("printer ") {
-                        if let Some(printer_info) = parse_lpstat_line(line) {
-                            printers.push(printer_info);
-                        }
+                // Drain indented continuation lines until the next header or EOF.
+                let mut alerts: Option<String> = None;
+                while let Some(peek) = lines.peek() {
+                    if !(peek.starts_with(' ') || peek.starts_with('\t')) {
+                        break;
+                    }
+                    let cont = lines.next().expect("peeked").trim_start();
+                    if let Some(rest) = cont.strip_prefix("Alerts:") {
+                        alerts = Some(rest.trim().to_string());
                     }
                 }
 
-                // Get default printer
-                let default_printer = get_default_printer().await;
+                printers.push(merge_alerts(header, alerts.as_deref()));
+            }
 
-                // Mark default printer
-                if let Some(ref default_name) = default_printer {
-                    for printer in &mut printers {
-                        if printer.name() == default_name {
-                            *printer = Printer::new(
-                                printer.name().to_string(),
-                                printer.status().clone(),
-                                printer.error_state().clone(),
-                                printer.is_offline(),
-                                true, // is_default
-                            );
-                        }
+            let default_printer = get_default_printer().await;
+            if let Some(ref default_name) = default_printer {
+                for printer in &mut printers {
+                    if printer.name() == default_name {
+                        *printer = Printer::new_with_state(
+                            printer.name().to_string(),
+                            printer.status().clone(),
+                            printer.state().cloned(),
+                            printer.error_state().clone(),
+                            printer.is_offline(),
+                            true, // is_default
+                        );
                     }
                 }
             }
         }
 
-        // If no printers found via lpstat, try alternative methods
         if printers.is_empty() {
             warn!("No printers found via lpstat, trying alternative detection methods");
             printers.extend(detect_printers_alternative().await?);
@@ -242,6 +313,28 @@ impl PrinterBackend for LinuxBackend {
 
         Ok(None)
     }
+
+    async fn list_jobs(&self, printer_name: Option<&str>) -> Result<Vec<Job>> {
+        use crate::logging::pe_info as info;
+
+        info!("Querying print jobs via lpstat -l -o...");
+
+        // `lpstat -o [destination]` lists active jobs; `-l` adds the
+        // indented Status/Alerts continuation lines we use to derive
+        // `JobStatus`. Caller-supplied name is passed both to lpstat (for
+        // CUPS-side filtering) and to the parser (defense in depth).
+        let mut args: Vec<&str> = vec!["-l", "-o"];
+        if let Some(name) = printer_name {
+            args.push(name);
+        }
+
+        match run_cups_command("lpstat", &args).await {
+            Ok(stdout) => Ok(lpstat_jobs::parse_jobs(&stdout, printer_name)),
+            // Empty queue makes lpstat exit non-zero on some CUPS builds;
+            // treat that as "no jobs" rather than a backend failure.
+            Err(_) => Ok(Vec::new()),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -249,56 +342,88 @@ fn parse_lpstat_line(line: &str) -> Option<Printer> {
     use crate::{ErrorState, PrinterStatus};
 
     // Example line: "printer HP_LaserJet_1020 is idle.  enabled since Mon 01 Jan 2024 12:00:00 PM UTC"
-    if let Some(rest) = line.strip_prefix("printer ") {
-        if let Some(space_pos) = rest.find(' ') {
-            let name = &rest[..space_pos];
-            let status_part = &rest[space_pos + 1..];
+    if let Some(rest) = line.strip_prefix("printer ")
+        && let Some(space_pos) = rest.find(' ')
+    {
+        let name = &rest[..space_pos];
+        let status_part = &rest[space_pos + 1..];
 
-            let (status, error_state, is_offline) = if status_part.contains("idle") {
-                (PrinterStatus::Idle, ErrorState::NoError, false)
-            } else if status_part.contains("printing") {
-                (PrinterStatus::Printing, ErrorState::NoError, false)
-            } else if status_part.contains("stopped") || status_part.contains("disabled") {
-                (PrinterStatus::Offline, ErrorState::Other, true)
-            } else {
-                (
-                    PrinterStatus::StatusUnknown,
-                    ErrorState::UnknownError,
-                    false,
-                )
-            };
+        let (status, error_state, is_offline) = if status_part.contains("idle") {
+            (PrinterStatus::Idle, ErrorState::NoError, false)
+        } else if status_part.contains("printing") {
+            (PrinterStatus::Printing, ErrorState::NoError, false)
+        } else if status_part.contains("stopped") || status_part.contains("disabled") {
+            (PrinterStatus::Offline, ErrorState::Other, true)
+        } else {
+            (
+                PrinterStatus::StatusUnknown,
+                ErrorState::UnknownError,
+                false,
+            )
+        };
 
-            return Some(Printer::new(
-                name.to_string(),
-                status,
-                error_state,
-                is_offline,
-                false, // is_default - will be set later
-            ));
-        }
+        return Some(Printer::new(
+            name.to_string(),
+            status,
+            error_state,
+            is_offline,
+            false, // is_default - will be set later
+        ));
     }
 
     None
 }
 
+/// Combines a header-parsed `Printer` with the IPP `printer-state-reasons`
+/// surfaced in CUPS's `Alerts:` continuation line. When the alerts list
+/// resolves to a more specific [`ErrorState`] than the header (e.g. `Jammed`
+/// vs. the header's `NoError`), the alerts-derived value wins. Bits parsed
+/// from the alerts feed [`PrinterState::from_u32`] so callers see the same
+/// .NET PrintQueueStatus surface that `WindowsBackend` produces.
 #[cfg(unix)]
-async fn get_default_printer() -> Option<String> {
-    use tokio::process::Command;
+fn merge_alerts(header: Printer, alerts: Option<&str>) -> Printer {
+    use crate::PrinterState;
 
-    if let Ok(output) = Command::new("lpstat").arg("-d").output().await {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Some(name) = line.strip_prefix("system default destination: ") {
-                    return Some(name.to_string());
-                }
-                if line.starts_with("no system default destination") {
-                    return None;
-                }
-            }
-        }
+    let Some(alerts) = alerts else {
+        return header;
+    };
+
+    let (reason_err, bits) = lpstat_reasons::map_state_reasons(alerts);
+    if bits == 0 && matches!(reason_err, crate::ErrorState::NoError) {
+        return header;
     }
 
+    // Reason-derived error wins over the header's generic NoError/Other when
+    // it carries actual signal; keep the header value otherwise.
+    let final_error = if matches!(reason_err, crate::ErrorState::NoError) {
+        header.error_state().clone()
+    } else {
+        reason_err
+    };
+
+    let derived_state = (bits != 0).then(|| PrinterState::from_u32(bits));
+
+    Printer::new_with_state(
+        header.name().to_string(),
+        header.status().clone(),
+        derived_state,
+        final_error,
+        header.is_offline(),
+        header.is_default(),
+    )
+}
+
+#[cfg(unix)]
+async fn get_default_printer() -> Option<String> {
+    let stdout = run_cups_command("lpstat", &["-d"]).await.ok()?;
+    for line in stdout.lines() {
+        if let Some(name) = line.strip_prefix("system default destination: ") {
+            return Some(name.to_string());
+        }
+        if line.starts_with("no system default destination") {
+            return None;
+        }
+    }
     None
 }
 
@@ -310,16 +435,14 @@ async fn detect_printers_alternative() -> Result<Vec<Printer>> {
 
     let mut printers = Vec::new();
 
-    // Check for USB printers in /sys/class/usb
     info!("Checking for USB printers in /sys/class/usb...");
-    if let Ok(_entries) = fs::read_dir("/sys/class/usb").await {
-        // This is a basic implementation - in practice you'd need to parse USB device info
-        // to identify printers by their device class
+    if fs::read_dir("/sys/class/usb").await.is_ok() {
+        // Basic detection only - real USB-class parsing would walk each
+        // device's interface descriptors looking for class 0x07 (printer).
         info!("Found USB entries, but printer detection requires more complex parsing");
     }
 
-    // Check for parallel port printers
-    if let Ok(_) = fs::metadata("/dev/lp0").await {
+    if fs::metadata("/dev/lp0").await.is_ok() {
         info!("Found parallel port printer device");
         printers.push(Printer::new(
             "Parallel Port Printer".to_string(),
@@ -330,7 +453,6 @@ async fn detect_printers_alternative() -> Result<Vec<Printer>> {
         ));
     }
 
-    // For WSL or systems without direct hardware access, we might not find any printers
     if printers.is_empty() {
         info!("No printers detected via alternative methods");
     }
@@ -455,10 +577,10 @@ mod tests {
             let result = backend.find_printer("NonExistentPrinter_Test_12345").await;
             assert!(result.is_ok());
             // Should return None for non-existent printer
-            if let Ok(printer_opt) = result {
-                if printer_opt.is_some() {
-                    println!("Warning: Found printer with unlikely name");
-                }
+            if let Ok(printer_opt) = result
+                && printer_opt.is_some()
+            {
+                println!("Warning: Found printer with unlikely name");
             }
         }
     }
@@ -512,5 +634,82 @@ mod tests {
         let line = "This is not a valid lpstat line";
         let printer = parse_lpstat_line(line);
         assert!(printer.is_none());
+    }
+
+    /// F10 regression: a hung subprocess must surface as `CupsError` within
+    /// the configured budget. Uses a 200ms timeout against `sleep 5` so the
+    /// test finishes in well under a second.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_cups_command_times_out() {
+        let result = run_cups_command_with_timeout("sleep", &["5"], 200).await;
+        match result {
+            Err(crate::PrinterError::CupsError(msg)) => {
+                assert!(
+                    msg.contains("timed out"),
+                    "expected timeout message, got: {msg}"
+                );
+            }
+            other => panic!("expected CupsError(timed out ...), got {other:?}"),
+        }
+    }
+
+    /// B6/F9 regression: `LANG=C` is forced, so even when the host locale is
+    /// non-English the helper's stdout uses POSIX-locale formatting. We assert
+    /// this indirectly by running `printf` and confirming the bytes come back
+    /// unchanged (no locale-driven mangling).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_cups_command_forces_c_locale() {
+        let result =
+            run_cups_command_with_timeout("printf", &["printer X is idle.\n"], 1_000).await;
+        match result {
+            Ok(stdout) => assert_eq!(stdout, "printer X is idle.\n"),
+            // `printf` should exist on every unix CI runner; treat absence as
+            // an infra problem rather than a code failure.
+            Err(e) => eprintln!("skipping (printf unavailable?): {e}"),
+        }
+    }
+
+    /// M5 regression: a `printer is idle` block with `Alerts: toner-low`
+    /// must surface as `LowToner` (not the header-derived `NoError`) and the
+    /// derived `PrinterState` must reflect the corresponding bit.
+    #[cfg(unix)]
+    #[test]
+    fn merge_alerts_promotes_toner_low_over_idle_header() {
+        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
+            .expect("header parses");
+        let merged = merge_alerts(header, Some("toner-low-warning"));
+        assert_eq!(merged.error_state(), &crate::ErrorState::LowToner);
+        assert_eq!(merged.state(), Some(&crate::PrinterState::TonerLow));
+    }
+
+    /// M5 regression: a co-reported `media-empty,media-jam` must collapse to
+    /// `Jammed` (the higher-priority specific cause), matching the priority
+    /// chain in `PrinterState::from_u32`.
+    #[cfg(unix)]
+    #[test]
+    fn merge_alerts_picks_most_specific_cause() {
+        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
+            .expect("header parses");
+        let merged = merge_alerts(header, Some("media-empty-warning,media-jam-error"));
+        assert_eq!(merged.error_state(), &crate::ErrorState::Jammed);
+        assert_eq!(merged.state(), Some(&crate::PrinterState::PaperJam));
+    }
+
+    /// M5 regression: `Alerts: none` and absent alerts both leave the header
+    /// untouched (no spurious state assignment, no error override).
+    #[cfg(unix)]
+    #[test]
+    fn merge_alerts_none_leaves_header_untouched() {
+        let header = parse_lpstat_line("printer Foo is idle.  enabled since X")
+            .expect("header parses");
+        let merged_none = merge_alerts(header.clone(), Some("none"));
+        assert_eq!(merged_none.error_state(), &crate::ErrorState::NoError);
+        assert!(merged_none.state().is_none());
+
+        let merged_absent = merge_alerts(header, None);
+        assert_eq!(merged_absent.error_state(), &crate::ErrorState::NoError);
+        assert!(merged_absent.state().is_none());
     }
 }

@@ -80,6 +80,11 @@ impl PrinterMonitor {
         // siblings via `abort_all()`, preventing the orphaned-poller leak that
         // happened when the caller passed no CancellationToken.
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        // task-id → printer-name map. `JoinError::id()` carries the same id
+        // returned by `JoinSet::spawn`, so when a task panics we can correlate
+        // back to which printer's task failed and surface that in
+        // `PrinterError::TaskPanicked.printer_name` (F6).
+        let mut task_owner: HashMap<tokio::task::Id, String> = HashMap::new();
         let mut previous_states: HashMap<String, PresenceTracker> = HashMap::new();
 
         // Initialize per-printer trackers
@@ -97,7 +102,7 @@ impl PrinterMonitor {
             let cancel_token_clone = cancel_token.clone();
 
             // Clone the monitor (cheap Arc clone) for each task, sharing the same backend connection
-            tasks.spawn(async move {
+            let abort_handle = tasks.spawn(async move {
                 let mut consecutive_errors: u32 = 0;
 
                 loop {
@@ -227,6 +232,7 @@ impl PrinterMonitor {
                     }
                 }
             });
+            task_owner.insert(abort_handle.id(), printer_name);
         }
 
         // Process tasks as they finish; on the first real error, abort siblings
@@ -246,27 +252,33 @@ impl PrinterMonitor {
                     // Sibling aborted via abort_all() above - expected, ignore.
                 }
                 Err(je) => {
+                    let task_id = je.id();
+                    let owner = task_owner.remove(&task_id);
                     tasks.abort_all();
-                    // Distinguish panic from other join errors and pull the
-                    // payload string out of a panic so the caller can see what
-                    // actually went wrong. JoinError's Display only includes
-                    // "task panicked" / "task was cancelled" without the
-                    // payload, which is what F6 was about.
-                    let detail = if je.is_panic() {
-                        match je.try_into_panic() {
-                            Ok(payload) => {
-                                let msg = payload
-                                    .downcast_ref::<&'static str>()
-                                    .map(|s| (*s).to_string())
-                                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                                    .unwrap_or_else(|| "non-string panic payload".to_string());
-                                format!("monitoring task panicked: {}", msg)
-                            }
-                            Err(je) => format!("monitoring task panicked: {}", je),
-                        }
-                    } else {
-                        format!("monitoring task join failed: {}", je)
-                    };
+                    if je.is_panic() {
+                        // Pull the payload string out of the panic so the
+                        // caller can see what actually went wrong. F6 lifts
+                        // this from `PrinterError::Other(format!(...))` into
+                        // a typed `TaskPanicked` variant so callers can match
+                        // on it without string-parsing.
+                        let panic_message = match je.try_into_panic() {
+                            Ok(payload) => payload
+                                .downcast_ref::<&'static str>()
+                                .map(|s| (*s).to_string())
+                                .or_else(|| payload.downcast_ref::<String>().cloned())
+                                .unwrap_or_else(|| "non-string panic payload".to_string()),
+                            Err(je) => je.to_string(),
+                        };
+                        let err = crate::PrinterError::TaskPanicked {
+                            printer_name: owner,
+                            panic_message,
+                        };
+                        error!("{}", err);
+                        return Err(err);
+                    }
+                    // Non-panic join failure (e.g. runtime shutdown) stays
+                    // on `Other` - it isn't a printer-task panic.
+                    let detail = format!("monitoring task join failed: {}", je);
                     error!("{}", detail);
                     return Err(crate::PrinterError::Other(detail));
                 }

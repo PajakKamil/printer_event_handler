@@ -20,6 +20,19 @@ pub enum PrinterError {
     ///
     /// [`CancellationToken`]: crate::CancellationToken
     Cancelled,
+    /// A monitoring task panicked. Surfaced by `monitor_multiple_printers`
+    /// when a per-printer task hits an unwind-style panic - the payload
+    /// message and (when discoverable) the printer name are preserved so
+    /// callers can `match` on the variant instead of parsing strings out of
+    /// [`Self::Other`].
+    ///
+    /// `printer_name` is `Some(name)` when the join site can correlate the
+    /// failing task back to its printer (the default for the multi-printer
+    /// monitor); it falls back to `None` if no correlation is available.
+    TaskPanicked {
+        printer_name: Option<String>,
+        panic_message: String,
+    },
     /// Other errors
     Other(String),
 }
@@ -36,6 +49,13 @@ impl fmt::Display for PrinterError {
             }
             PrinterError::IoError(err) => write!(f, "I/O error: {}", err),
             PrinterError::Cancelled => write!(f, "Operation was cancelled"),
+            PrinterError::TaskPanicked {
+                printer_name,
+                panic_message,
+            } => {
+                let owner = printer_name.as_deref().unwrap_or("<unknown>");
+                write!(f, "monitoring task for {} panicked: {}", owner, panic_message)
+            }
             PrinterError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -114,6 +134,30 @@ mod tests {
     fn test_other_error_display() {
         let err = PrinterError::Other("Custom error message".to_string());
         assert_eq!(err.to_string(), "Custom error message");
+    }
+
+    #[test]
+    fn test_task_panicked_display_with_name() {
+        let err = PrinterError::TaskPanicked {
+            printer_name: Some("HP LaserJet".to_string()),
+            panic_message: "boom".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "monitoring task for HP LaserJet panicked: boom"
+        );
+    }
+
+    #[test]
+    fn test_task_panicked_display_without_name() {
+        let err = PrinterError::TaskPanicked {
+            printer_name: None,
+            panic_message: "boom".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "monitoring task for <unknown> panicked: boom"
+        );
     }
 
     #[test]
