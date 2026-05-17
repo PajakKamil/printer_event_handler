@@ -72,14 +72,14 @@ fn query_win32_printers_cached() -> Result<Vec<crate::printer::Win32Printer>> {
 #[async_trait]
 impl PrinterBackend for WindowsBackend {
     async fn new() -> Result<Self> {
-        use log::info;
+        use crate::logging::pe_info as info;
 
         info!("Initializing Windows WMI backend...");
         Ok(Self)
     }
 
     async fn list_printers(&self) -> Result<Vec<Printer>> {
-        use log::info;
+        use crate::logging::pe_info as info;
 
         info!("Querying printer information via WMI...");
 
@@ -112,7 +112,7 @@ pub struct LinuxBackend;
 #[async_trait]
 impl PrinterBackend for LinuxBackend {
     async fn new() -> Result<Self> {
-        use log::info;
+        use crate::logging::pe_info as info;
         use tokio::process::Command;
 
         info!("Initializing Linux CUPS backend...");
@@ -134,7 +134,7 @@ impl PrinterBackend for LinuxBackend {
     }
 
     async fn list_printers(&self) -> Result<Vec<Printer>> {
-        use log::{info, warn};
+        use crate::logging::{pe_info as info, pe_warn as warn};
         use tokio::process::Command;
 
         info!("Querying printer information via system commands...");
@@ -256,8 +256,8 @@ async fn get_default_printer() -> Option<String> {
 
 #[cfg(unix)]
 async fn detect_printers_alternative() -> Result<Vec<Printer>> {
+    use crate::logging::pe_info as info;
     use crate::{ErrorState, PrinterStatus};
-    use log::info;
     use tokio::fs;
 
     let mut printers = Vec::new();

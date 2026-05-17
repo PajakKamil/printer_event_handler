@@ -1,3 +1,8 @@
+// The integration suite exercises both the deprecated and the new public API
+// surface during the 1.5.0 deprecation cycle. Allowing deprecated usage here is
+// intentional - removing it would mean losing test coverage for legacy callers.
+#![allow(deprecated)]
+
 //! End-to-end integration tests covering the public `PrinterMonitor` API
 //! and the printer events the library surfaces.
 //!

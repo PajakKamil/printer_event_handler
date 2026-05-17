@@ -1,5 +1,6 @@
 /// Represents a printer's error state
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ErrorState {
     NoError,
     Other,

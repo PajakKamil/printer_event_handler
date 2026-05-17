@@ -102,7 +102,7 @@ async fn monitor_printer_cli(printer_name: &str) -> Result<(), PrinterError> {
 /// * `PrinterError::IoError` - If there are system I/O issues
 async fn list_printers_cli() -> Result<(), PrinterError> {
     let monitor = PrinterMonitor::new().await?;
-    let printers = monitor.list_printers().await?;
+    let printers = monitor.list_printers_cancellable(None).await?;
 
     if printers.is_empty() {
         println!("No printers found on this system.");

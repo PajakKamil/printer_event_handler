@@ -13,6 +13,13 @@ pub enum PrinterError {
     PlatformNotSupported,
     /// General I/O error
     IoError(std::io::Error),
+    /// The operation was cancelled via [`CancellationToken`] before it could
+    /// complete. Returned by the cancellable backend methods
+    /// (`list_printers_cancellable`, `find_printer_cancellable`) so callers can
+    /// distinguish "user asked us to stop" from a genuine WMI/CUPS failure.
+    ///
+    /// [`CancellationToken`]: crate::CancellationToken
+    Cancelled,
     /// Other errors
     Other(String),
 }
@@ -28,6 +35,7 @@ impl fmt::Display for PrinterError {
                 write!(f, "This platform is not supported")
             }
             PrinterError::IoError(err) => write!(f, "I/O error: {}", err),
+            PrinterError::Cancelled => write!(f, "Operation was cancelled"),
             PrinterError::Other(msg) => write!(f, "{}", msg),
         }
     }

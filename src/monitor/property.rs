@@ -4,6 +4,7 @@
 /// monitored for changes, replacing string-based property names with a
 /// strongly-typed interface.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MonitorableProperty {
     /// Printer name changes
     Name,

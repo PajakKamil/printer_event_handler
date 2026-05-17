@@ -9,11 +9,11 @@
 
 use std::sync::Arc;
 
-use log::info;
-
 use crate::Result;
 use crate::backend::{PrinterBackend, create_backend};
+use crate::logging::pe_info as info;
 
+mod builder;
 mod presence;
 mod property;
 mod single;
@@ -22,6 +22,7 @@ mod summary;
 // inside that module so this `mod multi` (sibling) can name it.
 mod multi;
 
+pub use builder::MonitorBuilder;
 pub use property::MonitorableProperty;
 pub use summary::PrinterSummary;
 

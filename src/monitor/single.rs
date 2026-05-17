@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use log::{error, info, warn};
+use crate::logging::{pe_error as error, pe_info as info, pe_warn as warn};
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
@@ -38,8 +38,35 @@ impl PrinterMonitor {
     ///     }
     /// }
     /// ```
+    #[deprecated(
+        since = "1.5.0",
+        note = "use `list_printers_cancellable` to support cancellation; this method will be removed in 2.0"
+    )]
     pub async fn list_printers(&self) -> Result<Vec<Printer>> {
         self.backend.list_printers().await
+    }
+
+    /// Cancellable variant of [`Self::list_printers`].
+    ///
+    /// When `cancel_token` is provided, the in-flight backend query is raced
+    /// against `token.cancelled()` and the call returns
+    /// [`PrinterError::Cancelled`] as soon as the token fires. Passing `None`
+    /// is equivalent to the deprecated [`Self::list_printers`].
+    ///
+    /// Note that the backend query (a WMI call on Windows, an `lpstat` exec on
+    /// Linux) is not itself abortable - cancellation surfaces as soon as the
+    /// current poll completes, not mid-flight.
+    pub async fn list_printers_cancellable(
+        &self,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Vec<Printer>> {
+        match cancel_token {
+            Some(token) => tokio::select! {
+                result = self.backend.list_printers() => result,
+                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+            },
+            None => self.backend.list_printers().await,
+        }
     }
 
     /// Searches for a specific printer by name using case-insensitive matching.
@@ -71,8 +98,31 @@ impl PrinterMonitor {
     ///     }
     /// }
     /// ```
+    #[deprecated(
+        since = "1.5.0",
+        note = "use `find_printer_cancellable` to support cancellation; this method will be removed in 2.0"
+    )]
     pub async fn find_printer(&self, name: &str) -> Result<Option<Printer>> {
         self.backend.find_printer(name).await
+    }
+
+    /// Cancellable variant of [`Self::find_printer`].
+    ///
+    /// See [`Self::list_printers_cancellable`] for the cancellation semantics
+    /// (token races against the in-flight backend query and yields
+    /// [`PrinterError::Cancelled`]).
+    pub async fn find_printer_cancellable(
+        &self,
+        name: &str,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Option<Printer>> {
+        match cancel_token {
+            Some(token) => tokio::select! {
+                result = self.backend.find_printer(name) => result,
+                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+            },
+            None => self.backend.find_printer(name).await,
+        }
     }
 
     /// Continuously monitors a specific printer for status changes.
@@ -148,7 +198,7 @@ impl PrinterMonitor {
                 return Ok(());
             }
 
-            match self.find_printer(printer_name).await {
+            match self.backend.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
                     consecutive_errors = 0;
                     info!("Checking printer: {}", current_printer.name());
@@ -248,7 +298,7 @@ impl PrinterMonitor {
     /// }
     /// ```
     pub async fn printer_summary(&self) -> Result<HashMap<String, PrinterSummary>> {
-        let printers = self.list_printers().await?;
+        let printers = self.backend.list_printers().await?;
         let mut summary = HashMap::new();
 
         for printer in printers {
@@ -265,6 +315,53 @@ impl PrinterMonitor {
         }
 
         Ok(summary)
+    }
+
+    /// Iterator counterpart to [`Self::printer_summary`].
+    ///
+    /// Returns the same `(name, summary)` pairs without allocating a
+    /// [`HashMap`]. Prefer this when you just need to iterate once - for
+    /// example to log every printer or feed a UI list - and don't need
+    /// key-based lookup.
+    ///
+    /// Order matches the underlying backend's enumeration order (insertion
+    /// order via the source `Vec<Printer>`), not the unspecified order a
+    /// `HashMap` iterator would yield.
+    ///
+    /// # Errors
+    /// Same errors as [`Self::printer_summary`].
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use printer_event_handler::PrinterMonitor;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let monitor = PrinterMonitor::new().await.unwrap();
+    ///     for (name, info) in monitor.printer_summary_iter().await.unwrap() {
+    ///         println!("{name}: {} ({})", info.status,
+    ///             if info.has_error { "ERROR" } else { "OK" });
+    ///     }
+    /// }
+    /// ```
+    pub async fn printer_summary_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = (String, PrinterSummary)>> {
+        let printers = self.backend.list_printers().await?;
+        let pairs: Vec<(String, PrinterSummary)> = printers
+            .into_iter()
+            .map(|printer| {
+                let summary = PrinterSummary {
+                    status: printer.status().clone(),
+                    error_state: printer.error_state().clone(),
+                    is_offline: printer.is_offline(),
+                    is_default: printer.is_default(),
+                    has_error: printer.has_error(),
+                };
+                (printer.name().to_string(), summary)
+            })
+            .collect();
+        Ok(pairs.into_iter())
     }
 
     /// Monitors a printer with detailed property change detection.
@@ -349,7 +446,7 @@ impl PrinterMonitor {
                 return Ok(());
             }
 
-            match self.find_printer(printer_name).await {
+            match self.backend.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
                     consecutive_errors = 0;
                     if let Some(ref prev) = previous_printer {
@@ -494,6 +591,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(windows)]
+    #[allow(deprecated)]
     async fn test_list_printers_windows() {
         let monitor = PrinterMonitor::new().await;
         if let Ok(monitor) = monitor {
@@ -512,6 +610,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
+    #[allow(deprecated)]
     async fn test_list_printers_unix() {
         let monitor = PrinterMonitor::new().await;
         assert!(monitor.is_ok());
@@ -531,6 +630,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_find_nonexistent_printer() {
         let monitor = PrinterMonitor::new().await;
         if let Ok(monitor) = monitor {
@@ -561,6 +661,29 @@ mod tests {
                 }
                 Err(e) => {
                     println!("Expected error in test environment: {}", e);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_printer_summary_iter_matches_map() {
+        // The iterator variant must yield the same (name, summary) pairs as the
+        // HashMap-returning variant - same set of names, equal summaries.
+        let monitor = PrinterMonitor::new().await;
+        if let Ok(monitor) = monitor {
+            let (map_result, iter_result) =
+                tokio::join!(monitor.printer_summary(), monitor.printer_summary_iter());
+            if let (Ok(summary_map), Ok(iter)) = (map_result, iter_result) {
+                let iter_vec: Vec<(String, _)> = iter.collect();
+                assert_eq!(iter_vec.len(), summary_map.len());
+                for (name, summary) in iter_vec {
+                    let from_map = summary_map.get(&name).expect("name must be in map");
+                    assert_eq!(from_map.status, summary.status);
+                    assert_eq!(from_map.error_state, summary.error_state);
+                    assert_eq!(from_map.is_offline, summary.is_offline);
+                    assert_eq!(from_map.is_default, summary.is_default);
+                    assert_eq!(from_map.has_error, summary.has_error);
                 }
             }
         }

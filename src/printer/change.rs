@@ -4,6 +4,7 @@ use super::status::PrinterStatus;
 
 /// Represents a change in a specific printer property
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PropertyChange {
     Name {
         old: String,
@@ -115,6 +116,7 @@ impl PropertyChange {
 
 /// Contains all property changes detected between two printer states
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PrinterChanges {
     /// The printer name these changes apply to
     pub printer_name: String,

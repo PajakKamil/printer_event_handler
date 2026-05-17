@@ -5,6 +5,7 @@ use crate::{ErrorState, PrinterStatus};
 /// This struct provides a snapshot of a printer's essential status information
 /// in a convenient format for reporting and monitoring applications.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PrinterSummary {
     /// Current operational status of the printer
     pub status: PrinterStatus,

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use log::{error, info, warn};
+use crate::logging::{pe_error as error, pe_info as info, pe_warn as warn};
 use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
@@ -109,7 +109,7 @@ impl PrinterMonitor {
                         return Ok(());
                     }
 
-                    match monitor_clone.find_printer(&printer_name_clone).await {
+                    match monitor_clone.backend.find_printer(&printer_name_clone).await {
                         Ok(Some(current_printer)) => {
                             consecutive_errors = 0;
                             // Acquire lock to check previous state and compute changes

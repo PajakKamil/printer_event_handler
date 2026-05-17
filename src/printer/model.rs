@@ -54,6 +54,7 @@ pub(crate) struct Win32Printer {
 
 /// Represents a printer and its current state
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Printer {
     name: String,
     status: PrinterStatus,
@@ -950,5 +951,25 @@ mod tests {
         // "Degraded" flips is_offline via the WMI-status fallback, so
         // IsOffline is expected to show up too.
         assert!(changes.has_property_change("IsOffline"));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_printer_serde_roundtrip() {
+        let original = Printer::new(
+            "JSON Test Printer".to_string(),
+            PrinterStatus::Printing,
+            ErrorState::LowToner,
+            false,
+            true,
+        );
+
+        let json = serde_json::to_string(&original).expect("serialize");
+        assert!(json.contains("JSON Test Printer"));
+        assert!(json.contains("Printing"));
+        assert!(json.contains("LowToner"));
+
+        let decoded: Printer = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, original);
     }
 }

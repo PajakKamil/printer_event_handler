@@ -38,6 +38,7 @@ pub(super) const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
 /// the .NET System.Printing.PrintQueueStatus enumeration flags.
 /// See: <https://learn.microsoft.com/en-us/dotnet/api/system.printing.printqueuestatus>
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PrinterState {
     None,                     // 0 - No status
     Paused,                   // 1 - The print queue is paused
