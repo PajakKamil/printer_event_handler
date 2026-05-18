@@ -247,25 +247,28 @@ const REASON_RULES: &[(&str, ErrorState, u32)] = &[
 /// taken verbatim from CUPS) into the most-specific [`ErrorState`] plus an
 /// OR'd `PRINTER_STATE_*` bitmask suitable for [`crate::PrinterState::from_u32`].
 ///
-/// Returns `(ErrorState::NoError, 0)` when the input is empty, equals `none`,
-/// or contains only tokens we don't recognise - matching IPP semantics where
-/// the absence of a reason means the printer is healthy.
+/// Returns `(ErrorState::NoError, 0)` when the input is empty or equals `none`
+/// (IPP semantics: no reason means the printer is healthy). When the input
+/// contains only tokens we don't recognise, returns `(ErrorState::Other, 0)`
+/// so callers can still distinguish "unknown reason reported" from "no reason".
 pub(super) fn map_state_reasons(reasons: &str) -> (ErrorState, u32) {
     let trimmed = reasons.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
         return (ErrorState::NoError, 0);
     }
 
+    // Lowercase each token once; both passes below share this slice.
+    let tokens: Vec<String> = trimmed
+        .split(',')
+        .map(|t| t.trim().to_ascii_lowercase())
+        .collect();
+
     let mut error_state: Option<ErrorState> = None;
     let mut bits: u32 = 0;
 
     // First pass: OR every recognised reason's bits in. This gives `from_u32`
     // the full picture for its own priority resolution.
-    // Second pass (priority): pick the ErrorState of the highest-priority
-    // recognised token. We iterate rules in declaration order (most-specific
-    // first) and stop at the first hit so the most informative variant wins.
-    for raw_token in trimmed.split(',') {
-        let token = raw_token.trim().to_ascii_lowercase();
+    for token in &tokens {
         for (stem, _, mask) in REASON_RULES {
             if token.starts_with(stem) {
                 bits |= mask;
@@ -273,11 +276,12 @@ pub(super) fn map_state_reasons(reasons: &str) -> (ErrorState, u32) {
             }
         }
     }
+
+    // Second pass (priority): pick the ErrorState of the highest-priority
+    // recognised token. We iterate rules in declaration order (most-specific
+    // first) and stop at the first hit so the most informative variant wins.
     for (stem, err, _) in REASON_RULES {
-        let matched = trimmed
-            .split(',')
-            .any(|t| t.trim().to_ascii_lowercase().starts_with(stem));
-        if matched {
+        if tokens.iter().any(|t| t.starts_with(stem)) {
             error_state = Some(err.clone());
             break;
         }

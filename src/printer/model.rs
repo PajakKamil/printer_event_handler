@@ -53,7 +53,7 @@ pub(crate) struct Win32Printer {
 }
 
 /// Represents a printer and its current state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Printer {
     name: String,
@@ -337,17 +337,39 @@ impl Printer {
             PRINTER_STATE_SERVER_UNKNOWN => "Server Unknown (Flag)",
             PRINTER_STATE_POWER_SAVE => "Power Save (Flag)",
 
-            // Combined bitmask - report the highest-priority flag that's set,
-            // mirroring `PrinterState::from_u32`.
+            // Combined bitmask - report the highest-priority flag that's
+            // set, mirroring the priority chain in `PrinterState::from_u32`
+            // exactly so the description never names a less-specific cause
+            // than the typed enum surfaces.
             _ => {
+                use super::state::{
+                    PRINTER_STATE_PAPER_JAM, PRINTER_STATE_PAPER_OUT,
+                    PRINTER_STATE_PAPER_PROBLEM,
+                };
                 if code & PRINTER_STATE_DOOR_OPEN != 0 {
                     "Door Open (Multi-flag)"
+                } else if code & PRINTER_STATE_PAPER_JAM != 0 {
+                    "Paper Jam (Multi-flag)"
+                } else if code & PRINTER_STATE_PAPER_OUT != 0 {
+                    "Paper Out (Multi-flag)"
+                } else if code & PRINTER_STATE_PAPER_PROBLEM != 0 {
+                    "Paper Problem (Multi-flag)"
                 } else if code & PRINTER_STATE_NO_TONER != 0 {
                     "No Toner (Multi-flag)"
+                } else if code & PRINTER_STATE_TONER_LOW != 0 {
+                    "Toner Low (Multi-flag)"
                 } else if code & PRINTER_STATE_OUT_OF_MEMORY != 0 {
                     "Out of Memory (Multi-flag)"
+                } else if code & PRINTER_STATE_USER_INTERVENTION_REQUIRED != 0 {
+                    "User Intervention Required (Multi-flag)"
+                } else if code & PRINTER_STATE_PAGE_PUNT != 0 {
+                    "Page Punt (Multi-flag)"
                 } else if code & PRINTER_STATE_OFFLINE != 0 {
                     "Offline (Multi-flag)"
+                } else if code & PRINTER_STATE_NOT_AVAILABLE != 0 {
+                    "Not Available (Multi-flag)"
+                } else if code & PRINTER_STATE_SERVER_UNKNOWN != 0 {
+                    "Server Unknown (Multi-flag)"
                 } else if code & PRINTER_STATE_ERROR != 0 {
                     "Error (Multi-flag)"
                 } else if code & PRINTER_STATE_PRINTING != 0 {
@@ -541,24 +563,6 @@ impl From<Win32Printer> for Printer {
             wmi_printer.default.unwrap_or(false),
             wmi_codes,
         )
-    }
-}
-
-impl PartialEq for Printer {
-    /// Compares two Printer instances for equality.
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.status == other.status
-            && self.state == other.state
-            && self.error_state == other.error_state
-            && self.is_offline == other.is_offline
-            && self.is_default == other.is_default
-            && self.printer_status_code == other.printer_status_code
-            && self.printer_state_code == other.printer_state_code
-            && self.detected_error_state_code == other.detected_error_state_code
-            && self.extended_detected_error_state_code == other.extended_detected_error_state_code
-            && self.extended_printer_status_code == other.extended_printer_status_code
-            && self.wmi_status == other.wmi_status
     }
 }
 

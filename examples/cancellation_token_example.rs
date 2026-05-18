@@ -12,6 +12,35 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
+/// Section separator length (in `=` characters) used between examples. Wide
+/// enough that the section break is visible but not so wide it wraps in a
+/// typical terminal.
+const SECTION_SEPARATOR_WIDTH: usize = 50;
+
+/// Poll cadence used by the basic / coordinated examples. Tight cadence so the
+/// example finishes its 8-15 second windows with meaningful polling activity.
+const FAST_POLL_INTERVAL_MS: u64 = 1_000;
+/// Slightly looser cadence for the multi-monitor example; the staggered
+/// cancellation timings are easier to follow when each monitor logs less.
+const SLOW_POLL_INTERVAL_MS: u64 = 2_000;
+
+/// Wall-clock budgets per example section.
+const BASIC_CANCEL_AFTER: Duration = Duration::from_secs(10);
+/// Base cancellation delay for the multi-monitor example; each successive
+/// monitor gets an additional `MULTI_MONITOR_STAGGER` on top so they cancel at
+/// different times.
+const MULTI_MONITOR_BASE_DELAY_SECS: u64 = 5;
+const MULTI_MONITOR_STAGGER_SECS: u64 = 3;
+const COORDINATED_CANCEL_AFTER: Duration = Duration::from_secs(8);
+const CONDITIONAL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Cadence at which `conditional_cancellation` rechecks printer state to
+/// decide whether to fire the cancel token early.
+const CONDITIONAL_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Max number of printers monitored simultaneously in
+/// `multiple_monitors_cancellation`.
+const MAX_MULTI_MONITORS: usize = 3;
+
 #[tokio::main]
 async fn main() -> Result<(), PrinterError> {
     env_logger::init();
@@ -31,21 +60,21 @@ async fn main() -> Result<(), PrinterError> {
     println!("-------------------------------------------");
     basic_cancellation_example(&monitor, &printer_name).await?;
 
-    println!("\n{}\n", "=".repeat(50));
+    println!("\n{}\n", "=".repeat(SECTION_SEPARATOR_WIDTH));
 
     // Example 2: Multiple monitors with individual cancellation
     println!("Example 2: Multiple Monitors with Individual Cancellation");
     println!("---------------------------------------------------------");
     multiple_monitors_cancellation(&monitor).await?;
 
-    println!("\n{}\n", "=".repeat(50));
+    println!("\n{}\n", "=".repeat(SECTION_SEPARATOR_WIDTH));
 
     // Example 3: Coordinated shutdown of multiple monitors
     println!("Example 3: Coordinated Shutdown");
     println!("-------------------------------");
     coordinated_shutdown(&monitor, &printer_name).await?;
 
-    println!("\n{}\n", "=".repeat(50));
+    println!("\n{}\n", "=".repeat(SECTION_SEPARATOR_WIDTH));
 
     // Example 4: Conditional cancellation based on printer state
     println!("Example 4: Conditional Cancellation");
@@ -89,7 +118,10 @@ async fn basic_cancellation_example(
     monitor: &PrinterMonitor,
     printer_name: &str,
 ) -> Result<(), PrinterError> {
-    println!("Starting monitoring for 10 seconds, then cancelling...");
+    println!(
+        "Starting monitoring for {} seconds, then cancelling...",
+        BASIC_CANCEL_AFTER.as_secs()
+    );
 
     // Create a cancellation token
     let cancel_token = CancellationToken::new();
@@ -104,23 +136,23 @@ async fn basic_cancellation_example(
         tokio::spawn(async move {
             monitor
                 .monitor(&printer_name_owned)
-                .interval_ms(1_000)
+                .interval_ms(FAST_POLL_INTERVAL_MS)
                 .cancel_token(cancel_token_clone)
                 .run_changes(|changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
-                    if changes.has_changes() {
-                        println!("[{}] Changes detected: {}", timestamp, changes.summary());
-                    } else {
-                        println!("[{}] Monitoring active...", timestamp);
-                    }
+                    // `run_changes` only fires when properties actually
+                    // changed - the empty-changes branch is unreachable.
+                    println!("[{}] Changes detected: {}", timestamp, changes.summary());
                 })
                 .await
         })
     };
 
-    // Wait for 10 seconds
-    println!("Waiting 10 seconds before cancellation...");
-    sleep(Duration::from_secs(10)).await;
+    println!(
+        "Waiting {} seconds before cancellation...",
+        BASIC_CANCEL_AFTER.as_secs()
+    );
+    sleep(BASIC_CANCEL_AFTER).await;
 
     // Cancel the monitoring
     println!("Cancelling monitoring...");
@@ -147,17 +179,19 @@ async fn multiple_monitors_cancellation(monitor: &PrinterMonitor) -> Result<(), 
 
     println!(
         "Starting {} monitor(s) with different cancellation times...",
-        printers.len().min(3)
+        printers.len().min(MAX_MULTI_MONITORS)
     );
 
     // Create monitoring tasks with different cancellation times
     let mut tasks = Vec::new();
     let mut cancel_tokens = Vec::new();
 
-    for (i, printer) in printers.iter().take(3).enumerate() {
+    for (i, printer) in printers.iter().take(MAX_MULTI_MONITORS).enumerate() {
         let cancel_token = CancellationToken::new();
         let printer_name = printer.name().to_string();
-        let cancel_duration = Duration::from_secs(5 + (i as u64 * 3));
+        let cancel_duration = Duration::from_secs(
+            MULTI_MONITOR_BASE_DELAY_SECS + (i as u64 * MULTI_MONITOR_STAGGER_SECS),
+        );
 
         println!(
             "   Monitor #{}: {} (will cancel after {} seconds)",
@@ -176,7 +210,7 @@ async fn multiple_monitors_cancellation(monitor: &PrinterMonitor) -> Result<(), 
                     .monitor_property(
                         &printer_name_clone,
                         MonitorableProperty::Status,
-                        2000,
+                        SLOW_POLL_INTERVAL_MS,
                         Some(cancel_clone),
                         move |change| {
                             println!("   [Monitor #{}] {}", i + 1, change.description());
@@ -237,7 +271,7 @@ async fn coordinated_shutdown(
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_printer_changes(&name, 2000, Some(cancel), |changes| {
+                .monitor_printer_changes(&name, SLOW_POLL_INTERVAL_MS, Some(cancel), |changes| {
                     if changes.has_changes() {
                         println!("   [Changes Monitor] {}", changes.summary());
                     }
@@ -256,7 +290,7 @@ async fn coordinated_shutdown(
                 .monitor_property(
                     &name,
                     MonitorableProperty::IsOffline,
-                    2000,
+                    SLOW_POLL_INTERVAL_MS,
                     Some(cancel),
                     |change| {
                         println!("   [Offline Monitor] {}", change.description());
@@ -276,7 +310,7 @@ async fn coordinated_shutdown(
                 .monitor_property(
                     &name,
                     MonitorableProperty::Status,
-                    2000,
+                    SLOW_POLL_INTERVAL_MS,
                     Some(cancel),
                     |change| {
                         println!("   [Status Monitor] {}", change.description());
@@ -286,8 +320,11 @@ async fn coordinated_shutdown(
         })
     };
 
-    println!("Three monitors started. Will cancel all in 8 seconds...");
-    sleep(Duration::from_secs(8)).await;
+    println!(
+        "Three monitors started. Will cancel all in {} seconds...",
+        COORDINATED_CANCEL_AFTER.as_secs()
+    );
+    sleep(COORDINATED_CANCEL_AFTER).await;
 
     // Cancel all monitors at once
     println!("\nCancelling all monitors...");
@@ -313,7 +350,10 @@ async fn conditional_cancellation(
         "Monitoring '{}' and will auto-cancel if printer goes offline or has an error...",
         printer_name
     );
-    println!("(Or after 15 seconds, whichever comes first)");
+    println!(
+        "(Or after {} seconds, whichever comes first)",
+        CONDITIONAL_TIMEOUT.as_secs()
+    );
 
     let cancel_token = CancellationToken::new();
     let cancel_for_monitor = cancel_token.clone();
@@ -326,28 +366,40 @@ async fn conditional_cancellation(
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_printer_changes(&name, 1000, Some(cancel_for_monitor), |changes| {
-                    let timestamp = changes.timestamp.format("%H:%M:%S");
-                    println!("[{}] Monitoring active...", timestamp);
-
-                    if changes.has_changes() {
-                        println!("   Changes: {}", changes.summary());
-                    }
-                })
+                .monitor_printer_changes(
+                    &name,
+                    FAST_POLL_INTERVAL_MS,
+                    Some(cancel_for_monitor),
+                    |changes| {
+                        let timestamp = changes.timestamp.format("%H:%M:%S");
+                        // `monitor_printer_changes` only fires when properties
+                        // actually changed - emit a single "changes detected"
+                        // line instead of the misleading "active + maybe changes"
+                        // pair that the previous form printed every poll.
+                        println!("[{}] Changes: {}", timestamp, changes.summary());
+                    },
+                )
                 .await
         })
     };
 
-    // Check printer state periodically and cancel if offline or error
+    // Check printer state periodically and cancel if offline or error. The
+    // `tokio::select!` here makes the loop responsive to cancellation: if the
+    // token fires (e.g. the monitor task hit its consecutive-error limit, or
+    // the timeout task triggered) we exit within the same scheduler tick
+    // instead of waiting up to `CONDITIONAL_CHECK_INTERVAL` for the next tick.
     let state_check_task = {
         let name = printer_name_owned.clone();
         let cancel = cancel_token.clone();
         let monitor = monitor.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            let mut interval = tokio::time::interval(CONDITIONAL_CHECK_INTERVAL);
 
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    _ = cancel.cancelled() => break,
+                }
 
                 if let Some(printer) = monitor.find_printer_cancellable(&name, None).await? {
                     if printer.is_offline() {
@@ -362,22 +414,19 @@ async fn conditional_cancellation(
                         break;
                     }
                 }
-
-                // Stop if already cancelled
-                if cancel.is_cancelled() {
-                    break;
-                }
             }
 
             Ok::<(), PrinterError>(())
         })
     };
 
-    // Timeout after 15 seconds
     let timeout_task = tokio::spawn(async move {
-        sleep(Duration::from_secs(15)).await;
+        sleep(CONDITIONAL_TIMEOUT).await;
         if !cancel_for_timeout.is_cancelled() {
-            println!("\nTimeout reached (15 seconds). Cancelling monitoring...");
+            println!(
+                "\nTimeout reached ({} seconds). Cancelling monitoring...",
+                CONDITIONAL_TIMEOUT.as_secs()
+            );
             cancel_for_timeout.cancel();
         }
     });

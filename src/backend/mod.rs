@@ -351,6 +351,11 @@ fn parse_lpstat_line(line: &str) -> Option<Printer> {
             (PrinterStatus::Idle, ErrorState::NoError, false)
         } else if status_part.contains("printing") {
             (PrinterStatus::Printing, ErrorState::NoError, false)
+        } else if status_part.contains("paused") {
+            // A queue paused by the admin is not offline - jobs still spool,
+            // they're just held. `StoppedPrinting` matches the WMI semantics
+            // (printer halted intentionally) rather than collapsing to Offline.
+            (PrinterStatus::StoppedPrinting, ErrorState::NoError, false)
         } else if status_part.contains("stopped") || status_part.contains("disabled") {
             (PrinterStatus::Offline, ErrorState::Other, true)
         } else {
@@ -635,6 +640,24 @@ mod tests {
             assert_eq!(p.name(), "Epson_XP");
             assert_eq!(p.status(), &crate::PrinterStatus::Offline);
             assert!(p.is_offline());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_paused() {
+        // CUPS reports a paused queue as "is paused"; we want StoppedPrinting
+        // (intentional halt) rather than the StatusUnknown fall-through, and
+        // is_offline must stay false because jobs continue to spool.
+        let line = "printer Brother_HL is paused.  enabled since Thu 04 Jan 2024 09:00:00 AM UTC";
+        let printer = parse_lpstat_line(line);
+
+        assert!(printer.is_some());
+        if let Some(p) = printer {
+            assert_eq!(p.name(), "Brother_HL");
+            assert_eq!(p.status(), &crate::PrinterStatus::StoppedPrinting);
+            assert_eq!(p.error_state(), &crate::ErrorState::NoError);
+            assert!(!p.is_offline());
         }
     }
 

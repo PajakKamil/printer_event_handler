@@ -10,6 +10,25 @@ use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
 
+/// Poll cadence for every monitor spawned by this example. Tight enough that
+/// you see manually-triggered changes within a second; loose enough to keep
+/// WMI/CUPS load negligible.
+const POLL_INTERVAL_MS: u64 = 1_000;
+
+/// Slower cadence used by the section-header divider repeats (line of "=").
+const SECTION_SEPARATOR_WIDTH: usize = 50;
+
+/// Wall-clock budgets for each demo section. Sized so the user can flip
+/// printer state manually and still see something happen before timeout.
+const DETAILED_MONITOR_DURATION: Duration = Duration::from_secs(30);
+const SPECIFIC_PROPERTY_DURATION: Duration = Duration::from_secs(20);
+const SINGLE_PRINTER_DURATION: Duration = Duration::from_secs(15);
+const MULTI_PRINTER_DURATION: Duration = Duration::from_secs(25);
+
+/// Cap on how many printers the multi-printer demo subscribes to. Three is
+/// enough to demonstrate concurrent monitoring without flooding the console.
+const MAX_DEMO_PRINTERS: usize = 3;
+
 #[tokio::main]
 async fn main() -> Result<(), PrinterError> {
     env_logger::init();
@@ -29,14 +48,14 @@ async fn main() -> Result<(), PrinterError> {
     println!("----------------------------------------------");
     demonstrate_detailed_monitoring(&monitor, &printer_name).await?;
 
-    println!("\n{}\n", "=".repeat(50));
+    println!("\n{}\n", "=".repeat(SECTION_SEPARATOR_WIDTH));
 
     // Example 2: Specific property monitoring
     println!("Example 2: Specific Property Monitoring");
     println!("---------------------------------------");
     demonstrate_specific_property_monitoring(&monitor, &printer_name).await?;
 
-    println!("\n{}\n", "=".repeat(50));
+    println!("\n{}\n", "=".repeat(SECTION_SEPARATOR_WIDTH));
 
     // Example 3: Multiple printer monitoring
     println!("Example 3: Multiple Printer Monitoring");
@@ -81,49 +100,44 @@ async fn demonstrate_detailed_monitoring(
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!("Starting detailed monitoring for: {}", printer_name);
-    println!("This will run for 30 seconds and show any property changes...");
-
-    let printer_name_clone = printer_name.to_string();
+    println!(
+        "This will run for {} seconds and show any property changes...",
+        DETAILED_MONITOR_DURATION.as_secs()
+    );
 
     // Start monitoring in a background task - clone the existing monitor
     // (cheap Arc clone, shares the same backend) rather than re-initialising.
     // We drive it via the 2.0 `MonitorBuilder::run_changes` so this example
     // doubles as a demo of the recommended fluent API.
     let monitoring_task = {
-        let printer_name = printer_name_clone.clone();
+        let printer_name = printer_name.to_string();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
                 .monitor(&printer_name)
-                .interval_ms(1_000)
+                .interval_ms(POLL_INTERVAL_MS)
                 .run_changes(|changes| {
+                    // `run_changes` only fires when properties actually
+                    // mutated; the initial snapshot is captured silently by
+                    // the monitor (see PrinterMonitor::monitor_printer_changes
+                    // docs). So `changes` always carries at least one entry
+                    // here - no `has_changes()` guard needed.
                     let timestamp = changes.timestamp.format("%H:%M:%S");
-
-                    if changes.has_changes() {
-                        println!(
-                            "[{}] CHANGES DETECTED for '{}': {}",
-                            timestamp,
-                            changes.printer_name,
-                            changes.summary()
-                        );
-
-                        for change in &changes.changes {
-                            println!("  - {}", change.description());
-                        }
-                        println!();
-                    } else if changes.changes.is_empty() {
-                        // This is the initial state capture
-                        println!(
-                            "[{}] Initial state captured for '{}'",
-                            timestamp, changes.printer_name
-                        );
+                    println!(
+                        "[{}] CHANGES DETECTED for '{}': {}",
+                        timestamp,
+                        changes.printer_name,
+                        changes.summary()
+                    );
+                    for change in &changes.changes {
+                        println!("  - {}", change.description());
                     }
+                    println!();
                 })
                 .await
         })
     };
 
-    // Let it run for 30 seconds
     tokio::select! {
         result = monitoring_task => {
             match result {
@@ -132,8 +146,11 @@ async fn demonstrate_detailed_monitoring(
                 Err(e) => println!("Monitoring task panicked: {}", e),
             }
         }
-        _ = sleep(Duration::from_secs(30)) => {
-            println!("Detailed monitoring example completed (30 seconds)");
+        _ = sleep(DETAILED_MONITOR_DURATION) => {
+            println!(
+                "Detailed monitoring example completed ({} seconds)",
+                DETAILED_MONITOR_DURATION.as_secs()
+            );
         }
     }
 
@@ -146,17 +163,19 @@ async fn demonstrate_specific_property_monitoring(
     printer_name: &str,
 ) -> Result<(), PrinterError> {
     println!("Monitoring specific properties for: {}", printer_name);
-    println!("Will monitor 'IsOffline' and 'Status' properties for 20 seconds...");
+    println!(
+        "Will monitor 'IsOffline' and 'Status' properties for {} seconds...",
+        SPECIFIC_PROPERTY_DURATION.as_secs()
+    );
 
     // Monitor IsOffline property via `MonitorBuilder::filter_property`.
-    let printer_name1 = printer_name.to_string();
     let offline_task = {
-        let printer_name = printer_name1.clone();
+        let printer_name = printer_name.to_string();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
                 .monitor(&printer_name)
-                .interval_ms(1_000)
+                .interval_ms(POLL_INTERVAL_MS)
                 .filter_property(MonitorableProperty::IsOffline)
                 .run_property(|change| {
                     println!("OFFLINE STATUS CHANGE: {}", change.description());
@@ -166,14 +185,13 @@ async fn demonstrate_specific_property_monitoring(
     };
 
     // Monitor Status property - same builder, different filter.
-    let printer_name2 = printer_name.to_string();
     let status_task = {
-        let printer_name = printer_name2.clone();
+        let printer_name = printer_name.to_string();
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
                 .monitor(&printer_name)
-                .interval_ms(1_000)
+                .interval_ms(POLL_INTERVAL_MS)
                 .filter_property(MonitorableProperty::Status)
                 .run_property(|change| {
                     println!("STATUS CHANGE: {}", change.description());
@@ -182,12 +200,14 @@ async fn demonstrate_specific_property_monitoring(
         })
     };
 
-    // Let them run for 20 seconds
     tokio::select! {
         _ = offline_task => println!("Offline monitoring completed"),
         _ = status_task => println!("Status monitoring completed"),
-        _ = sleep(Duration::from_secs(20)) => {
-            println!("Specific property monitoring example completed (20 seconds)");
+        _ = sleep(SPECIFIC_PROPERTY_DURATION) => {
+            println!(
+                "Specific property monitoring example completed ({} seconds)",
+                SPECIFIC_PROPERTY_DURATION.as_secs()
+            );
         }
     }
 
@@ -203,8 +223,9 @@ async fn demonstrate_multiple_printer_monitoring(
     if printers.len() < 2 {
         println!("Need at least 2 printers for multiple printer monitoring demo");
         println!(
-            "Found {} printer(s). Monitoring the first one for 15 seconds...",
-            printers.len()
+            "Found {} printer(s). Monitoring the first one for {} seconds...",
+            printers.len(),
+            SINGLE_PRINTER_DURATION.as_secs()
         );
 
         if !printers.is_empty() {
@@ -213,33 +234,41 @@ async fn demonstrate_multiple_printer_monitoring(
                 let monitor = monitor.clone();
                 tokio::spawn(async move {
                     monitor
-                        .monitor_multiple_printers(printer_names, 1000, None, |changes| {
-                            if changes.has_changes() {
-                                println!(
-                                    "Multi-printer monitor - {}: {}",
-                                    changes.printer_name,
-                                    changes.summary()
-                                );
-                            }
-                        })
+                        .monitor_multiple_printers(
+                            printer_names,
+                            POLL_INTERVAL_MS,
+                            None,
+                            |changes| {
+                                if changes.has_changes() {
+                                    println!(
+                                        "Multi-printer monitor - {}: {}",
+                                        changes.printer_name,
+                                        changes.summary()
+                                    );
+                                }
+                            },
+                        )
                         .await
                 })
             };
 
             tokio::select! {
                 _ = monitoring_task => println!("Multi-printer monitoring completed"),
-                _ = sleep(Duration::from_secs(15)) => {
-                    println!("Multiple printer monitoring example completed (15 seconds)");
+                _ = sleep(SINGLE_PRINTER_DURATION) => {
+                    println!(
+                        "Multiple printer monitoring example completed ({} seconds)",
+                        SINGLE_PRINTER_DURATION.as_secs()
+                    );
                 }
             }
         }
         return Ok(());
     }
 
-    // Take up to 3 printers for demonstration
+    // Take up to MAX_DEMO_PRINTERS for demonstration.
     let printer_names: Vec<String> = printers
         .iter()
-        .take(3)
+        .take(MAX_DEMO_PRINTERS)
         .map(|p| p.name().to_string())
         .collect();
 
@@ -247,13 +276,16 @@ async fn demonstrate_multiple_printer_monitoring(
     for name in &printer_names {
         println!("  - {}", name);
     }
-    println!("This will run for 25 seconds...\n");
+    println!(
+        "This will run for {} seconds...\n",
+        MULTI_PRINTER_DURATION.as_secs()
+    );
 
     let monitoring_task = {
         let monitor = monitor.clone();
         tokio::spawn(async move {
             monitor
-                .monitor_multiple_printers(printer_names, 1000, None, |changes| {
+                .monitor_multiple_printers(printer_names, POLL_INTERVAL_MS, None, |changes| {
                     let timestamp = changes.timestamp.format("%H:%M:%S");
                     if changes.has_changes() {
                         println!(
@@ -278,7 +310,6 @@ async fn demonstrate_multiple_printer_monitoring(
         })
     };
 
-    // Let it run for 25 seconds
     tokio::select! {
         result = monitoring_task => {
             match result {
@@ -287,8 +318,11 @@ async fn demonstrate_multiple_printer_monitoring(
                 Err(e) => println!("Multi-printer monitoring task panicked: {}", e),
             }
         }
-        _ = sleep(Duration::from_secs(25)) => {
-            println!("Multiple printer monitoring example completed (25 seconds)");
+        _ = sleep(MULTI_PRINTER_DURATION) => {
+            println!(
+                "Multiple printer monitoring example completed ({} seconds)",
+                MULTI_PRINTER_DURATION.as_secs()
+            );
         }
     }
 

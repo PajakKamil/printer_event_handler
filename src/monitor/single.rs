@@ -126,7 +126,7 @@ impl PrinterMonitor {
     ///
     /// # Behavior
     /// - If the printer disappears during monitoring, the callback is called with a synthetic
-    ///   "unknown" status to indicate the printer is no longer available
+    ///   `Offline` snapshot to indicate the printer is no longer available
     /// - The first check always triggers the callback to provide the initial status
     /// - Subsequent calls only trigger the callback if the status actually changes
     ///
@@ -203,11 +203,16 @@ impl PrinterMonitor {
                     consecutive_errors = 0;
                     warn!("Printer '{}' not found", printer_name);
                     if previous_printer.is_some() {
-                        // Printer was previously found but now missing
+                        // Printer was previously found but now missing. The
+                        // synthetic snapshot uses `Offline` (not
+                        // `StatusUnknown`) so callers see the disappearance
+                        // as an offline transition, mirroring the
+                        // `monitor_printer_changes` / `monitor_multiple_printers`
+                        // path.
                         callback(
                             &Printer::new(
                                 printer_name.to_string(),
-                                crate::PrinterStatus::StatusUnknown,
+                                crate::PrinterStatus::Offline,
                                 crate::ErrorState::UnknownError,
                                 true,
                                 false,

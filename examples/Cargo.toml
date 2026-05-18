@@ -51,9 +51,11 @@ events = ["printer_event_handler/events"]
 [dependencies]
 # `events` follows the workspace feature above so the cfg checks inside
 # `events_demo.rs` line up with what the parent crate actually compiled in.
-printer_event_handler = { path = "..", default-features = true }
+# `default-features` is left implicit (= true) - the events feature is enabled
+# via the explicit `[features].events` entry above, not by overriding defaults.
+printer_event_handler = { path = ".." }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7.18"
-tokio-stream = "0.1.17"
+tokio-stream = "0.1.18"
 env_logger = "0.11.10"
 chrono = { version = "0.4.44", features = ["serde"] }

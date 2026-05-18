@@ -5,6 +5,7 @@ use super::status::PrinterStatus;
 /// Represents a change in a specific printer property
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum PropertyChange {
     Name {
         old: String,

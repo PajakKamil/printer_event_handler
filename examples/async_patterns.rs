@@ -176,7 +176,7 @@ async fn concurrent_monitoring(shutdown: CancellationToken) -> Result<(), Printe
 
 /// Helper: monitor one printer until `MONITOR_CHECKS` ticks have elapsed or
 /// the cancellation token fires. `PrinterMonitor` is taken by value because
-/// it is cheaply `Clone`able since v1.4.0.
+/// it is cheaply `Clone`able (wraps `Arc<dyn PrinterBackend>` internally).
 async fn monitor_single_printer(
     monitor: PrinterMonitor,
     printer_name: String,
