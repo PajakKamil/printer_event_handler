@@ -190,10 +190,15 @@ async fn run_cups_command_with_timeout(
     use std::time::Duration;
     use tokio::process::Command;
 
+    // `kill_on_drop(true)` is load-bearing: when `tokio::time::timeout` fires it
+    // drops the `output()` future, which drops the `Child`. Without this flag
+    // tokio leaves the subprocess running, so a wedged CUPS daemon would leak
+    // one orphan per poll cycle.
     let fut = Command::new(program)
         .args(args)
         .env("LANG", STABLE_LOCALE)
         .env("LC_ALL", STABLE_LOCALE)
+        .kill_on_drop(true)
         .output();
 
     let output = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
@@ -347,16 +352,25 @@ fn parse_lpstat_line(line: &str) -> Option<Printer> {
         let name = &rest[..space_pos];
         let status_part = &rest[space_pos + 1..];
 
-        let (status, error_state, is_offline) = if status_part.contains("idle") {
+        // Match on the leading `is X.` predicate (the device-state half of
+        // the CUPS status line). The `enabled|disabled since ...` clause
+        // that lpstat appends is the queue's accepting-jobs flag, which is
+        // orthogonal to the device state and intentionally ignored here -
+        // an admin-disabled queue whose device is still idle reports as
+        // `Idle`, mirroring how we report `Paused` queues whose device is
+        // also still operational.
+        let (status, error_state, is_offline) = if status_part.contains("is idle") {
             (PrinterStatus::Idle, ErrorState::NoError, false)
-        } else if status_part.contains("printing") {
+        } else if status_part.contains("is printing") {
             (PrinterStatus::Printing, ErrorState::NoError, false)
-        } else if status_part.contains("paused") {
+        } else if status_part.contains("is paused") {
             // A queue paused by the admin is not offline - jobs still spool,
             // they're just held. `StoppedPrinting` matches the WMI semantics
             // (printer halted intentionally) rather than collapsing to Offline.
             (PrinterStatus::StoppedPrinting, ErrorState::NoError, false)
-        } else if status_part.contains("stopped") || status_part.contains("disabled") {
+        } else if status_part.contains("is stopped") {
+            // Device-side stop (paper jam, hardware fault, lost contact).
+            // The device is the source of truth for `is_offline`.
             (PrinterStatus::Offline, ErrorState::Other, true)
         } else {
             (
@@ -659,6 +673,21 @@ mod tests {
             assert_eq!(p.error_state(), &crate::ErrorState::NoError);
             assert!(!p.is_offline());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_lpstat_line_admin_disabled_queue_reports_device_state() {
+        // An admin-disabled queue whose device is still idle must report
+        // the *device* state (Idle), not flip to Offline. The pre-fix code
+        // had `contains("disabled")` as an else-branch that was unreachable
+        // for this line (the `is idle` branch matched first), but the
+        // intent is now explicit: queue-accepting-jobs is ignored here.
+        let line = "printer Foo is idle.  disabled since Wed 03 Jan 2024 08:00:00 AM UTC";
+        let printer = parse_lpstat_line(line).expect("line parses");
+        assert_eq!(printer.status(), &crate::PrinterStatus::Idle);
+        assert_eq!(printer.error_state(), &crate::ErrorState::NoError);
+        assert!(!printer.is_offline());
     }
 
     #[cfg(unix)]

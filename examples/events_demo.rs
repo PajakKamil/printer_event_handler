@@ -78,17 +78,28 @@ async fn main() -> Result<(), PrinterError> {
         .run_changes_stream();
 
     let mut received = 0;
-    while let Some(changes) = stream.next().await {
-        received += 1;
-        println!(
-            "[{}] event #{}: {} change(s) on {}",
-            changes.timestamp.format("%H:%M:%S"),
-            received,
-            changes.change_count(),
-            changes.printer_name
-        );
-        for change in &changes.changes {
-            println!("    - {}", change.description());
+    // Stream items are `Result<PrinterChanges>` - a terminal backend
+    // failure (WMI service crash, sustained CUPS errors) propagates as
+    // the final item before the stream closes.
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(changes) => {
+                received += 1;
+                println!(
+                    "[{}] event #{}: {} change(s) on {}",
+                    changes.timestamp.format("%H:%M:%S"),
+                    received,
+                    changes.change_count(),
+                    changes.printer_name
+                );
+                for change in &changes.changes {
+                    println!("    - {}", change.description());
+                }
+            }
+            Err(e) => {
+                println!("Backend error (stream ending): {}", e);
+                break;
+            }
         }
     }
 

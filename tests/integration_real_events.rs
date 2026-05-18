@@ -82,20 +82,38 @@ const TEST_PRINTER_ACCESSORS: &str = "RustPrinterEventHandlerTest_42_Accessors";
 const TEST_PRINTER_INITIAL_SNAPSHOT: &str = "RustPrinterEventHandlerTest_42_InitialSnapshot";
 const TEST_PRINTER_CANCEL: &str = "RustPrinterEventHandlerTest_42_Cancel";
 
+// Windows-only test printer names. Each constant is consumed by a single
+// `#[cfg(windows)]` test below; gating here keeps Linux/macOS builds free
+// of dead-code warnings without losing the per-test name isolation.
+#[cfg(windows)]
 const TEST_PRINTER_PAPER_OUT: &str = "RustPrinterEventHandlerTest_42_PaperOut";
+#[cfg(windows)]
 const TEST_PRINTER_DOOR_OPEN: &str = "RustPrinterEventHandlerTest_42_DoorOpen";
+#[cfg(windows)]
 const TEST_PRINTER_PAPER_JAM: &str = "RustPrinterEventHandlerTest_42_PaperJam";
+#[cfg(windows)]
 const TEST_PRINTER_TONER_LOW: &str = "RustPrinterEventHandlerTest_42_TonerLow";
+#[cfg(windows)]
 const TEST_PRINTER_NO_TONER: &str = "RustPrinterEventHandlerTest_42_NoToner";
+#[cfg(windows)]
 const TEST_PRINTER_OUTPUT_BIN: &str = "RustPrinterEventHandlerTest_42_OutputBin";
+#[cfg(windows)]
 const TEST_PRINTER_OOM: &str = "RustPrinterEventHandlerTest_42_Oom";
+#[cfg(windows)]
 const TEST_PRINTER_USER_INT: &str = "RustPrinterEventHandlerTest_42_UserInt";
+#[cfg(windows)]
 const TEST_PRINTER_ERROR: &str = "RustPrinterEventHandlerTest_42_Error";
+#[cfg(windows)]
 const TEST_PRINTER_COMBINED: &str = "RustPrinterEventHandlerTest_42_Combined";
+#[cfg(windows)]
 const TEST_PRINTER_PAUSE_RESUME: &str = "RustPrinterEventHandlerTest_42_PauseResume";
+#[cfg(windows)]
 const TEST_PRINTER_SET_DEFAULT: &str = "RustPrinterEventHandlerTest_42_SetDefault";
+#[cfg(windows)]
 const TEST_PRINTER_RENAME_SRC: &str = "RustPrinterEventHandlerTest_42_RenameSrc";
+#[cfg(windows)]
 const TEST_PRINTER_RENAME_DST: &str = "RustPrinterEventHandlerTest_42_RenameDst";
+#[cfg(windows)]
 const TEST_PRINTER_SUBMIT_JOB: &str = "RustPrinterEventHandlerTest_42_SubmitJob";
 
 #[cfg(unix)]
@@ -339,13 +357,17 @@ mod platform {
     /// Linux state injection isn't available - CUPS doesn't expose a
     /// programmatic way to set `printer-state-reasons` from userspace
     /// without first parsing them in the backend. Returns `false` so
-    /// every Windows injection test skips cleanly on Linux. The
+    /// every Windows injection test would skip cleanly on Linux. The
     /// follow-up M5 enhancement to `LinuxBackend` is what unlocks
-    /// this.
+    /// this. `#[allow(dead_code)]` because all current callers are
+    /// `#[cfg(windows)]`-gated; the stub stays here as the documented
+    /// API mirror for when the cross-platform injection tests land.
+    #[allow(dead_code)]
     pub fn inject_state(_name: &str, _flags: u32) -> bool {
         false
     }
 
+    #[allow(dead_code)]
     pub fn clear_state(_name: &str) -> bool {
         false
     }
@@ -403,9 +425,11 @@ mod platform {
         false
     }
     pub fn remove_printer(_: &str) {}
+    #[allow(dead_code)]
     pub fn inject_state(_: &str, _: u32) -> bool {
         false
     }
+    #[allow(dead_code)]
     pub fn clear_state(_: &str) -> bool {
         false
     }
@@ -590,6 +614,9 @@ fn saw_name_change(captured: &CapturedChanges, old: &str, new: &str) -> bool {
     )
 }
 
+// Only consumed by `#[cfg(windows)]` scripted-monitor tests (raw WMI code
+// and WmiStatus assertions); gated to silence dead-code warnings on Linux.
+#[cfg(windows)]
 fn saw_property_named(captured: &CapturedChanges, property_name: &str) -> bool {
     captured
         .lock()

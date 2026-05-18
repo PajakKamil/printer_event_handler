@@ -10,11 +10,12 @@ A cross-platform Rust library for monitoring printer status and events on Window
 
 - **Cross-platform** - Windows (WMI) and Linux (CUPS) with a single async API.
 - **Fluent builder** - `MonitorBuilder` collapses interval/cancellation/property-filter/event-mode options behind one chainable entry point.
-- **Real-time monitoring** - millisecond polling, or sub-second event-driven monitoring on Windows via the optional `events` cargo feature (WMI `__InstanceModificationEvent`).
-- **Cancellable** - every monitor and backend query accepts a `tokio_util::sync::CancellationToken`.
-- **Stream API** - terminal methods return `tokio_stream::Stream<Item = PrinterChanges>` / `Stream<Item = PropertyChange>` for callers that prefer streams over callbacks.
-- **Print job tracking** - `list_jobs` returns typed `Job` / `JobStatus` values from `Win32_PrintJob` on Windows and `lpstat -l -o` on Linux.
+- **Real-time monitoring** - millisecond polling, or sub-second event-driven monitoring via the optional `events` cargo feature (WMI `__InstanceModificationEvent` on Windows, `org.cups.cupsd.Notifier` D-Bus signals on Linux).
+- **Cancellable** - every monitor and backend query accepts a `tokio_util::sync::CancellationToken`. `tokio::select!` cancellation arms are biased so an already-cancelled token always wins the race.
+- **Stream API** - terminal methods return `tokio_stream::Stream<Item = Result<PrinterChanges>>` / `Stream<Item = Result<PropertyChange>>`. A terminal backend failure (e.g. sustained WMI/CUPS outage) propagates as the stream's final item before it closes, so callers can distinguish graceful shutdown from a crash.
+- **Print job tracking** - `list_jobs` returns typed `Job` / `JobStatus` values from `Win32_PrintJob` on Windows, `lpstat -l -o` on Linux, or libcups2 FFI when the optional `linux-libcups` feature is on.
 - **Rich Linux state** - CUPS `printer-state-reasons` parsed into the same `ErrorState` / `PrinterState` surface used on Windows (media-empty, toner-low, cover-open, jammed, etc.).
+- **Typed task panics** - `monitor_multiple_printers` surfaces per-printer task panics as `PrinterError::TaskPanicked { printer_name, panic_message }`; no string parsing needed.
 - **Optional `serde` / `tracing`** - off by default; opt in via cargo features.
 - **Library + CLI** - use as a crate or as the `printer_monitor` binary.
 
@@ -26,7 +27,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-printer_event_handler = "1.5.0"
+printer_event_handler = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -136,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Stream-Based Monitoring
 
-`run_changes_stream` and `run_property_stream` return `tokio_stream::Stream` so you can pipe events through combinators instead of using a callback:
+`run_changes_stream` and `run_property_stream` return `tokio_stream::Stream` so you can pipe events through combinators instead of using a callback. Items are `Result<T>`: an `Err` is emitted once when the underlying monitor exits because of sustained backend failure, then the stream closes. A clean shutdown (cancellation, receiver drop) closes the stream without emitting an error.
 
 ```rust
 use printer_event_handler::PrinterMonitor;
@@ -153,21 +154,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .interval_ms(INTERVAL_MS)
         .run_changes_stream();
 
-    while let Some(changes) = stream.next().await {
-        println!("got {} change(s)", changes.change_count());
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(changes) => println!("got {} change(s)", changes.change_count()),
+            Err(e) => eprintln!("monitor stopped: {}", e),
+        }
     }
 
     Ok(())
 }
 ```
 
-### Event-Driven Monitoring (Windows, opt-in)
+### Event-Driven Monitoring (opt-in)
 
-With the `events` cargo feature enabled and on Windows, the builder can subscribe to WMI `__InstanceModificationEvent` notifications instead of polling. State changes propagate within ~1 second of the WMI report. On other targets or without the feature, `with_events(true)` is accepted silently and the builder falls back to polling.
+With the `events` cargo feature enabled, the builder can subscribe to platform event notifications instead of polling: WMI `__InstanceModificationEvent` on Windows, `org.cups.cupsd.Notifier` D-Bus signals on Linux. State changes propagate within ~1 second of the platform notification. Without the feature, `with_events(true)` is accepted silently and the builder falls back to polling.
 
 ```toml
 [dependencies]
-printer_event_handler = { version = "1.5.0", features = ["events"] }
+printer_event_handler = { version = "2.0.0", features = ["events"] }
 ```
 
 ```rust
@@ -183,8 +187,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_events(true)
         .run_changes_stream();
 
-    while let Some(changes) = stream.next().await {
-        println!("event: {}", changes.summary());
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(changes) => println!("event: {}", changes.summary()),
+            Err(e) => eprintln!("subscription ended: {}", e),
+        }
     }
 
     Ok(())
@@ -240,21 +247,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-On Linux the parser reads `lpstat -l -o` and maps the `Status:` line plus IPP `job-state-reasons` into `JobStatus` (`Printing`, `Spooling`, `Paused`, `Complete`, `Deleted`, `Error`, ...).
+On Linux the parser reads `lpstat -l -o` and maps the `Status:` line plus IPP `job-state-reasons` into `JobStatus` (`Printing`, `Spooling`, `Paused`, `Complete`, `Deleted`, `Error`, ...). With the optional `linux-libcups` cargo feature, the same call goes through libcups2 via `cupsGetJobs2()` instead of forking a subprocess - faster, and surfaces structured fields like job title and owner directly.
 
 ## Cargo Features
 
-| Feature           | Default | Effect                                                                                                              |
-|-------------------|---------|---------------------------------------------------------------------------------------------------------------------|
-| `rt-multi-thread` | on      | Pulls in tokio's multi-threaded runtime. Disable for library-only consumers that bring their own runtime.           |
-| `serde`           | off     | Adds `Serialize` / `Deserialize` derives to the public domain types (`Printer`, `Job`, status enums, change types). |
-| `tracing`         | off     | Routes library log calls through the `tracing` crate instead of `log`.                                              |
-| `events`          | off     | Windows-only event-driven monitoring via WMI `__InstanceModificationEvent`. Enables `MonitorBuilder::with_events`.  |
+| Feature           | Default | Effect                                                                                                                                                |
+|-------------------|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `rt-multi-thread` | on      | Pulls in tokio's multi-threaded runtime. Disable for library-only consumers that bring their own runtime.                                             |
+| `serde`           | off     | Adds `Serialize` / `Deserialize` derives to the public domain types (`Printer`, `Job`, status enums, change types).                                   |
+| `tracing`         | off     | Routes library log calls through the `tracing` crate instead of `log`.                                                                                |
+| `events`          | off     | Event-driven monitoring: WMI `__InstanceModificationEvent` on Windows, CUPS D-Bus signals (`org.cups.cupsd.Notifier`) on Linux. Enables `MonitorBuilder::with_events`. |
+| `linux-libcups`   | off     | Linux only. Replaces the `lpstat` subprocess parser with a libcups2 FFI backend (`cupsGetDests2` / `cupsGetJobs2`). Requires `libcups2-dev` / `cups-devel` at build time. |
 
 Example:
 
 ```toml
-printer_event_handler = { version = "1.5.0", default-features = false, features = ["serde", "tracing"] }
+printer_event_handler = { version = "2.0.0", default-features = false, features = ["serde", "tracing"] }
 tokio = { version = "1.0", features = ["macros", "rt"] }
 ```
 
@@ -292,14 +300,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `list_printers_cancellable` / `find_printer_cancellable` return `PrinterError::Cancelled` when the token wins the race.
 
-## Deprecations
+## Migrating From 1.x
 
-The pre-1.5.0 listing entry points are still callable but emit deprecation warnings; they will be removed in 2.0:
+2.0 is a breaking release. Highlights:
 
-- `PrinterMonitor::list_printers` -> use `list_printers_cancellable`.
-- `PrinterMonitor::find_printer` -> use `find_printer_cancellable`.
+- **Removed**: `PrinterMonitor::list_printers` and `PrinterMonitor::find_printer`. Use `list_printers_cancellable(None)` and `find_printer_cancellable(name, None)` - pass `Some(token)` to abort the query.
+- **Stream item type changed**: `run_changes_stream` / `run_property_stream` now yield `Result<T>` instead of `T`. A terminal `Err` propagates a sustained backend failure before the stream closes; clean shutdowns close the stream silently.
+- **`PrinterBackend::list_jobs` is now required.** Downstream backend implementations can no longer silently fall back to an empty-vec default.
+- **All public enums are `#[non_exhaustive]`** (`PrinterError`, `PrinterState`, `ErrorState`, `PrinterStatus`, `JobStatus`, `MonitorableProperty`, `PropertyChange`). Exhaustive `match`es need a wildcard arm; future variant additions are non-breaking within 2.x.
+- **New typed error variants**: `PrinterError::Cancelled` (returned by the `*_cancellable` methods when the token wins the race) and `PrinterError::TaskPanicked { printer_name, panic_message }` (surfaced by `monitor_multiple_printers` so callers can match on the failing printer instead of parsing strings).
 
-Existing `monitor_printer` / `monitor_printer_changes` / `monitor_property` continue to work and are not deprecated; the `MonitorBuilder` is a convenience layer on top of them.
+The positional `monitor_printer` / `monitor_printer_changes` / `monitor_property` methods still exist and are not deprecated; `MonitorBuilder` is a convenience layer on top of them.
 
 ## CLI Usage
 
@@ -383,12 +394,16 @@ Ubuntu/Debian:
 
 ```bash
 sudo apt install cups
+# Add the libcups development headers if you plan to build with --features linux-libcups
+sudo apt install libcups2-dev
 ```
 
 RHEL/CentOS/Fedora:
 
 ```bash
-sudo yum install cups   # or: sudo dnf install cups-client
+sudo dnf install cups-client
+# For --features linux-libcups
+sudo dnf install cups-devel
 ```
 
 ## API Reference
@@ -419,8 +434,8 @@ sudo yum install cups   # or: sudo dnf install cups-client
 | `run_changes(callback)`        | Callback receives a `PrinterChanges` per poll that detected mutations.                                                          |
 | `run_printer(callback)`        | Callback receives `(current, previous)` snapshots.                                                                              |
 | `run_property(callback)`       | Callback receives a single `PropertyChange` matching `filter_property`.                                                         |
-| `run_changes_stream()`         | Returns `Stream<Item = PrinterChanges>`.                                                                                        |
-| `run_property_stream()`        | Returns `Result<Stream<Item = PropertyChange>>` (errors if `filter_property` was not set).                                      |
+| `run_changes_stream()`         | Returns `Stream<Item = Result<PrinterChanges>>`. Terminal backend failure is emitted as the stream's final `Err` item.          |
+| `run_property_stream()`        | Returns `Result<Stream<Item = Result<PropertyChange>>>`. Outer `Result` errors if `filter_property` was not set; inner mirrors the changes-stream contract. |
 
 ### Available Properties to Monitor
 
@@ -584,12 +599,15 @@ pub enum ErrorState {
 
 ## Examples
 
-The [examples](examples/) directory holds runnable usage patterns. Examples have their own `Cargo.toml` to keep the main library lightweight.
+The [examples](examples/) directory holds runnable usage patterns. Examples have their own `Cargo.toml` to keep the main library lightweight. See [examples/README.md](examples/README.md) for a recommended reading order.
 
 - [`basic_listing.rs`](examples/basic_listing.rs) - list all printers with detailed information.
 - [`monitor_changes.rs`](examples/monitor_changes.rs) - monitor status changes over time.
 - [`property_monitoring.rs`](examples/property_monitoring.rs) - property-level change detection.
-- [`error_handling.rs`](examples/error_handling.rs) - graceful error handling.
+- [`streaming_changes.rs`](examples/streaming_changes.rs) - `run_changes_stream` / `run_property_stream` with `StreamExt` combinators.
+- [`events_demo.rs`](examples/events_demo.rs) - `with_events(true)` for WMI / D-Bus event subscriptions.
+- [`jobs_listing.rs`](examples/jobs_listing.rs) - `list_jobs` across all printers or a single queue.
+- [`error_handling.rs`](examples/error_handling.rs) - graceful error handling, including `Cancelled` / `TaskPanicked` matching.
 - [`async_patterns.rs`](examples/async_patterns.rs) - concurrent monitoring patterns.
 - [`cancellation_token_example.rs`](examples/cancellation_token_example.rs) - graceful shutdown via `CancellationToken`.
 
@@ -618,7 +636,8 @@ cargo doc --open
 # Feature combinations
 cargo test --features serde
 cargo build --features tracing
-cargo build --features events     # Windows only
+cargo build --features events     # WMI events on Windows, CUPS D-Bus on Linux
+cargo build --features linux-libcups   # Linux only; needs libcups2-dev / cups-devel
 cargo build --no-default-features --lib
 ```
 

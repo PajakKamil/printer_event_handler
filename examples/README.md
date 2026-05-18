@@ -57,13 +57,24 @@ If you are porting code from 1.x:
   `list_printers_cancellable(None)` and `find_printer_cancellable(name, None)`
   - pass `Some(token)` to abort the query.
 - Every public enum is `#[non_exhaustive]` (`PrinterError`, `PrinterState`,
-  `ErrorState`, `PrinterStatus`, `JobStatus`). Exhaustive `match`es need a
-  wildcard arm - see `error_handling.rs`.
+  `ErrorState`, `PrinterStatus`, `JobStatus`, `MonitorableProperty`,
+  `PropertyChange`). Exhaustive `match`es need a wildcard arm - see
+  `error_handling.rs`.
 - The `monitor_printer*` direct methods still exist, but
   `monitor.monitor(name).interval_ms(...).run_*(...)` is the recommended
-  fluent form. Examples 2-6 use it.
+  fluent form. Examples 2-5 use it.
+- `run_changes_stream` and `run_property_stream` now yield `Result<T>`
+  instead of `T`. A terminal backend failure (sustained WMI/CUPS outage)
+  arrives as the stream's final `Err` before it closes; clean shutdowns
+  close the stream silently. See `streaming_changes.rs` / `events_demo.rs`
+  for the `match item { Ok(...) => ..., Err(e) => ... }` shape.
 - `PrinterBackend::list_jobs` is now required (no default impl). The
   `jobs_listing` example calls it via `PrinterMonitor::list_jobs`.
+- New typed `PrinterError` variants: `Cancelled` (returned by the
+  `*_cancellable` methods when the token wins the race) and
+  `TaskPanicked { printer_name, panic_message }` (surfaced by
+  `monitor_multiple_printers` so callers can match on the failing
+  printer instead of parsing strings). Both demoed in `error_handling.rs`.
 
 ## Cargo features the examples touch
 

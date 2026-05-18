@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::logging::{pe_error as error, pe_info as info, pe_warn as warn};
@@ -70,6 +70,25 @@ impl PrinterMonitor {
     where
         F: Fn(&PrinterChanges) + Send + Sync + 'static,
     {
+        // Dedupe before spawning. Two tasks polling the same printer would
+        // race on a shared `PresenceTracker` and flip-flop the "initial
+        // state captured" vs "synthetic IsOffline" outputs based on which
+        // task won each scheduler tick.
+        let mut seen: HashSet<String> = HashSet::with_capacity(printer_names.len());
+        let printer_names: Vec<String> = printer_names
+            .into_iter()
+            .filter(|name| {
+                let inserted = seen.insert(name.clone());
+                if !inserted {
+                    warn!(
+                        "monitor_multiple_printers: duplicate printer name '{}' ignored",
+                        name
+                    );
+                }
+                inserted
+            })
+            .collect();
+
         info!(
             "Starting concurrent monitoring of {} printers",
             printer_names.len()
@@ -85,24 +104,22 @@ impl PrinterMonitor {
         // back to which printer's task failed and surface that in
         // `PrinterError::TaskPanicked.printer_name` (F6).
         let mut task_owner: HashMap<tokio::task::Id, String> = HashMap::new();
-        let mut previous_states: HashMap<String, PresenceTracker> = HashMap::new();
-
-        // Initialize per-printer trackers
-        for name in &printer_names {
-            previous_states.insert(name.clone(), PresenceTracker::new());
-        }
-
-        let previous_states = Arc::new(tokio::sync::Mutex::new(previous_states));
 
         for printer_name in printer_names {
             let callback_clone = callback.clone();
             let printer_name_clone = printer_name.clone();
-            let previous_states_clone = previous_states.clone();
             let monitor_clone = self.clone(); // Cheap Arc clone - shares the same backend
             let cancel_token_clone = cancel_token.clone();
 
-            // Clone the monitor (cheap Arc clone) for each task, sharing the same backend connection
+            // Each task owns its own `PresenceTracker` outright. The previous
+            // implementation routed all trackers through a single
+            // `Arc<Mutex<HashMap<String, PresenceTracker>>>` even though the
+            // tasks' keys partition disjointly - the mutex serialised tasks
+            // for no correctness benefit. Local ownership removes the
+            // contention and also removes the callback-under-lock concern
+            // entirely.
             let abort_handle = tasks.spawn(async move {
+                let mut tracker = PresenceTracker::new();
                 let mut consecutive_errors: u32 = 0;
 
                 loop {
@@ -117,32 +134,24 @@ impl PrinterMonitor {
                     match monitor_clone.backend.find_printer(&printer_name_clone).await {
                         Ok(Some(current_printer)) => {
                             consecutive_errors = 0;
-                            // Acquire lock to check previous state and compute changes
-                            let (changes_to_report, is_initial) = {
-                                let mut states = previous_states_clone.lock().await;
-                                let tracker = states
-                                    .entry(printer_name_clone.clone())
-                                    .or_insert_with(PresenceTracker::new);
-
-                                let result = if let Some(ref prev) = tracker.snapshot {
-                                    let changes = prev.compare_with(&current_printer);
-                                    if changes.has_changes() {
-                                        (Some(changes), false)
-                                    } else {
-                                        (None, false)
-                                    }
+                            let changes_to_report = if let Some(ref prev) = tracker.snapshot {
+                                let changes = prev.compare_with(&current_printer);
+                                if changes.has_changes() {
+                                    Some(changes)
                                 } else {
-                                    // Never seen this printer before - silent capture.
-                                    (None, true)
-                                };
-
-                                tracker.snapshot = Some(current_printer);
-                                tracker.was_present_last_poll = true;
-                                result
+                                    None
+                                }
+                            } else {
+                                info!(
+                                    "Printer '{}' - Initial state captured",
+                                    printer_name_clone
+                                );
+                                None
                             };
-                            // Lock is released here
 
-                            // Call callback outside of lock to avoid contention
+                            tracker.snapshot = Some(current_printer);
+                            tracker.was_present_last_poll = true;
+
                             if let Some(changes) = changes_to_report {
                                 info!(
                                     "Printer '{}' - {} properties changed",
@@ -150,57 +159,35 @@ impl PrinterMonitor {
                                     changes.change_count()
                                 );
                                 callback_clone(&changes);
-                            } else if is_initial {
-                                info!("Printer '{}' - Initial state captured", printer_name_clone);
                             }
                         }
                         Ok(None) => {
                             consecutive_errors = 0;
                             warn!("Printer '{}' not found", printer_name_clone);
 
-                            // Acquire lock to handle disappearance / continued absence.
-                            let changes_to_report = {
-                                let mut states = previous_states_clone.lock().await;
-                                let tracker = states
-                                    .entry(printer_name_clone.clone())
-                                    .or_insert_with(PresenceTracker::new);
-
-                                let changes = if tracker.was_present_last_poll {
-                                    // Fresh disappearance - synthesize IsOffline transition.
-                                    tracker.snapshot.as_ref().map(|prev| {
-                                        let mut changes =
-                                            PrinterChanges::new(printer_name_clone.clone());
-                                        changes.changes.push(crate::PropertyChange::IsOffline {
-                                            old: prev.is_offline(),
-                                            new: true,
-                                        });
-                                        changes
-                                    })
-                                } else {
-                                    None
-                                };
-
-                                if tracker.was_present_last_poll {
-                                    // Replace the snapshot with a synthetic "missing"
-                                    // baseline so the next successful poll surfaces
-                                    // the reappearance delta (B4).
-                                    tracker.snapshot = Some(Printer::new(
-                                        printer_name_clone.clone(),
-                                        crate::PrinterStatus::Offline,
-                                        crate::ErrorState::UnknownError,
-                                        true,
-                                        false,
-                                    ));
+                            if tracker.was_present_last_poll {
+                                // Fresh disappearance - synthesize IsOffline transition.
+                                if let Some(ref prev) = tracker.snapshot {
+                                    let mut changes =
+                                        PrinterChanges::new(printer_name_clone.clone());
+                                    changes.changes.push(crate::PropertyChange::IsOffline {
+                                        old: prev.is_offline(),
+                                        new: true,
+                                    });
+                                    callback_clone(&changes);
                                 }
-                                tracker.was_present_last_poll = false;
-                                changes
-                            };
-                            // Lock is released here
-
-                            // Call callback outside of lock
-                            if let Some(changes) = changes_to_report {
-                                callback_clone(&changes);
+                                // Replace the snapshot with a synthetic "missing"
+                                // baseline so the next successful poll surfaces
+                                // the reappearance delta (B4).
+                                tracker.snapshot = Some(Printer::new(
+                                    printer_name_clone.clone(),
+                                    crate::PrinterStatus::Offline,
+                                    crate::ErrorState::UnknownError,
+                                    true,
+                                    false,
+                                ));
                             }
+                            tracker.was_present_last_poll = false;
                         }
                         Err(e) => {
                             consecutive_errors += 1;

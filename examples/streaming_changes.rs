@@ -98,16 +98,27 @@ async fn stream_changes(monitor: &PrinterMonitor, target: &str) -> Result<(), Pr
 
     let mut stream = stream.take(MAX_CHANGE_EVENTS);
     let mut received = 0;
-    while let Some(changes) = stream.next().await {
-        received += 1;
-        println!(
-            "  [{}] {} change(s): {}",
-            changes.timestamp.format("%H:%M:%S"),
-            changes.change_count(),
-            changes.summary()
-        );
-        for change in &changes.changes {
-            println!("      - {}", change.description());
+    // Stream items are `Result<PrinterChanges>` so callers can distinguish
+    // graceful end (cancellation, receiver drop) from a terminal backend
+    // failure - sustained WMI/CUPS errors propagate here as the final item.
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(changes) => {
+                received += 1;
+                println!(
+                    "  [{}] {} change(s): {}",
+                    changes.timestamp.format("%H:%M:%S"),
+                    changes.change_count(),
+                    changes.summary()
+                );
+                for change in &changes.changes {
+                    println!("      - {}", change.description());
+                }
+            }
+            Err(e) => {
+                println!("  Section 1 backend error (stream ending): {}", e);
+                break;
+            }
         }
     }
     println!(
@@ -132,8 +143,14 @@ async fn stream_property(monitor: &PrinterMonitor, target: &str) -> Result<(), P
         .run_property_stream()?;
 
     tokio::pin!(stream);
-    while let Some(change) = stream.next().await {
-        println!("  IsOffline change: {}", change.description());
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(change) => println!("  IsOffline change: {}", change.description()),
+            Err(e) => {
+                println!("  Section 2 backend error (stream ending): {}", e);
+                break;
+            }
+        }
     }
     println!("  Section 2 ended (stream closed - cancellation or backend exit).");
     Ok(())

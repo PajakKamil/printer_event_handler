@@ -8,12 +8,13 @@ use super::status::PrinterStatus;
 
 #[cfg(windows)]
 use super::state::{
-    PRINTER_STATE_DOOR_OPEN, PRINTER_STATE_ERROR, PRINTER_STATE_INITIALIZING,
-    PRINTER_STATE_NO_TONER, PRINTER_STATE_NOT_AVAILABLE, PRINTER_STATE_OFFLINE,
-    PRINTER_STATE_OUT_OF_MEMORY, PRINTER_STATE_OUTPUT_BIN_FULL, PRINTER_STATE_PAGE_PUNT,
-    PRINTER_STATE_PAUSED, PRINTER_STATE_POWER_SAVE, PRINTER_STATE_PRINTING,
-    PRINTER_STATE_PROCESSING, PRINTER_STATE_SERVER_UNKNOWN, PRINTER_STATE_TONER_LOW,
-    PRINTER_STATE_USER_INTERVENTION_REQUIRED, PRINTER_STATE_WAITING, PRINTER_STATE_WARMING_UP,
+    EXTENDED_PRINTER_STATUS_OFFLINE, PRINTER_STATE_DOOR_OPEN, PRINTER_STATE_ERROR,
+    PRINTER_STATE_INITIALIZING, PRINTER_STATE_NO_TONER, PRINTER_STATE_NOT_AVAILABLE,
+    PRINTER_STATE_OFFLINE, PRINTER_STATE_OUT_OF_MEMORY, PRINTER_STATE_OUTPUT_BIN_FULL,
+    PRINTER_STATE_PAGE_PUNT, PRINTER_STATE_PAUSED, PRINTER_STATE_POWER_SAVE,
+    PRINTER_STATE_PRINTING, PRINTER_STATE_PROCESSING, PRINTER_STATE_SERVER_UNKNOWN,
+    PRINTER_STATE_TONER_LOW, PRINTER_STATE_USER_INTERVENTION_REQUIRED, PRINTER_STATE_WAITING,
+    PRINTER_STATE_WARMING_UP,
 };
 
 /// WMI status codes for creating Printer instances
@@ -343,8 +344,7 @@ impl Printer {
             // than the typed enum surfaces.
             _ => {
                 use super::state::{
-                    PRINTER_STATE_PAPER_JAM, PRINTER_STATE_PAPER_OUT,
-                    PRINTER_STATE_PAPER_PROBLEM,
+                    PRINTER_STATE_PAPER_JAM, PRINTER_STATE_PAPER_OUT, PRINTER_STATE_PAPER_PROBLEM,
                 };
                 if code & PRINTER_STATE_DOOR_OPEN != 0 {
                     "Door Open (Multi-flag)"
@@ -444,6 +444,7 @@ impl Printer {
     }
 
     /// Returns human-readable description of ExtendedPrinterStatus code
+    #[cfg(windows)]
     pub fn extended_printer_status_description(&self) -> Option<&'static str> {
         self.extended_printer_status_code.map(|code| match code {
             1 => "Other",
@@ -452,7 +453,7 @@ impl Printer {
             4 => "Printing",
             5 => "Warmup",
             6 => "Stopped Printing",
-            7 => "Offline",
+            EXTENDED_PRINTER_STATUS_OFFLINE => "Offline",
             8 => "Paused",
             9 => "Error",
             10 => "Busy",
@@ -463,6 +464,13 @@ impl Printer {
             15 => "Power Save",
             _ => "Unknown Extended Status Code",
         })
+    }
+
+    /// Non-Windows stub - `extended_printer_status_code` is always `None`
+    /// off Windows, so this always returns `None`.
+    #[cfg(not(windows))]
+    pub fn extended_printer_status_description(&self) -> Option<&'static str> {
+        None
     }
 
     /// Compares this printer with another and returns detailed changes
@@ -536,8 +544,7 @@ impl From<Win32Printer> for Printer {
                 PrinterState::NotAvailable |
                 PrinterState::ServerUnknown
             ))
-            // ExtendedPrinterStatus 7 = Offline
-            || wmi_printer.extended_printer_status == Some(7)
+            || wmi_printer.extended_printer_status == Some(EXTENDED_PRINTER_STATUS_OFFLINE)
             // Status property indicating problematic states
             || wmi_printer.status.as_ref().is_some_and(|s| matches!(s.as_str(),
                 "Degraded" | "Error" | "No Contact" | "Lost Comm" | "NonRecover"

@@ -351,7 +351,8 @@ async fn run_changes_stream_yields_detected_changes() {
 
     let changes = first
         .expect("stream must yield within run window")
-        .expect("stream must not end before yielding the Status change");
+        .expect("stream must not end before yielding the Status change")
+        .expect("stream must yield Ok(changes), not an error");
     assert!(
         changes.has_property_change("Status"),
         "expected Status change, got {:?}",
@@ -384,8 +385,9 @@ async fn run_property_stream_filters_to_selected_property() {
 
     let change = first
         .expect("stream must yield within run window")
-        .expect("stream must yield the filtered Status change");
-    assert_eq!(change.property_name(), "Status");
+        .expect("stream must yield the filtered Status change")
+        .expect("stream must yield Ok(change), not an error");
+    assert_eq!(change.property(), MonitorableProperty::Status);
 }
 
 /// F6 regression: when the per-printer callback panics, the join error

@@ -40,10 +40,19 @@ impl PrinterMonitor {
         cancel_token: Option<CancellationToken>,
     ) -> Result<Vec<Printer>> {
         match cancel_token {
-            Some(token) => tokio::select! {
-                result = self.backend.list_printers() => result,
-                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
-            },
+            Some(token) => {
+                if token.is_cancelled() {
+                    return Err(crate::PrinterError::Cancelled);
+                }
+                // `biased;` ensures an already-cancelled token wins the race
+                // when both branches are immediately ready; default `select!`
+                // is pseudo-random and would occasionally return the value.
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+                    result = self.backend.list_printers() => result,
+                }
+            }
             None => self.backend.list_printers().await,
         }
     }
@@ -72,10 +81,16 @@ impl PrinterMonitor {
         cancel_token: Option<CancellationToken>,
     ) -> Result<Option<Printer>> {
         match cancel_token {
-            Some(token) => tokio::select! {
-                result = self.backend.find_printer(name) => result,
-                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
-            },
+            Some(token) => {
+                if token.is_cancelled() {
+                    return Err(crate::PrinterError::Cancelled);
+                }
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+                    result = self.backend.find_printer(name) => result,
+                }
+            }
             None => self.backend.find_printer(name).await,
         }
     }
@@ -96,10 +111,16 @@ impl PrinterMonitor {
         cancel_token: Option<CancellationToken>,
     ) -> Result<Vec<crate::Job>> {
         match cancel_token {
-            Some(token) => tokio::select! {
-                result = self.backend.list_jobs(printer_name) => result,
-                _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
-            },
+            Some(token) => {
+                if token.is_cancelled() {
+                    return Err(crate::PrinterError::Cancelled);
+                }
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => Err(crate::PrinterError::Cancelled),
+                    result = self.backend.list_jobs(printer_name) => result,
+                }
+            }
             None => self.backend.list_jobs(printer_name).await,
         }
     }
@@ -165,7 +186,15 @@ impl PrinterMonitor {
     {
         info!("Starting printer monitoring service for: {}", printer_name);
 
+        // `previous_printer` is the next-comparison baseline. After a fresh
+        // disappearance it is replaced with a synthetic "missing" snapshot so
+        // the next successful poll surfaces the reappearance as a real diff,
+        // rather than silently looking like a fresh initial capture (B4).
+        // `was_present` separates "first ever poll" from "post-disappearance
+        // continued absence" so the disappearance callback fires exactly once
+        // per gap.
         let mut previous_printer: Option<Printer> = None;
+        let mut was_present: bool = false;
         let mut consecutive_errors: u32 = 0;
 
         loop {
@@ -180,7 +209,6 @@ impl PrinterMonitor {
             match self.backend.find_printer(printer_name).await {
                 Ok(Some(current_printer)) => {
                     consecutive_errors = 0;
-                    info!("Checking printer: {}", current_printer.name());
                     let has_changed = previous_printer
                         .as_ref()
                         .map(|prev| prev != &current_printer)
@@ -195,32 +223,28 @@ impl PrinterMonitor {
                             current_printer.error_description()
                         );
                         previous_printer = Some(current_printer);
-                    } else {
-                        info!("Printer '{}' status unchanged", printer_name);
                     }
+                    was_present = true;
                 }
                 Ok(None) => {
                     consecutive_errors = 0;
                     warn!("Printer '{}' not found", printer_name);
-                    if previous_printer.is_some() {
-                        // Printer was previously found but now missing. The
-                        // synthetic snapshot uses `Offline` (not
-                        // `StatusUnknown`) so callers see the disappearance
-                        // as an offline transition, mirroring the
-                        // `monitor_printer_changes` / `monitor_multiple_printers`
-                        // path.
-                        callback(
-                            &Printer::new(
-                                printer_name.to_string(),
-                                crate::PrinterStatus::Offline,
-                                crate::ErrorState::UnknownError,
-                                true,
-                                false,
-                            ),
-                            previous_printer.as_ref(),
+                    if was_present {
+                        let synthetic = Printer::new(
+                            printer_name.to_string(),
+                            crate::PrinterStatus::Offline,
+                            crate::ErrorState::UnknownError,
+                            true,
+                            false,
                         );
-                        previous_printer = None;
+                        callback(&synthetic, previous_printer.as_ref());
+                        // Retain the synthetic snapshot as the new baseline so
+                        // a subsequent reappearance compares against it and
+                        // produces `(real, Some(synthetic))` rather than a
+                        // misleading second `(real, None)` initial-capture.
+                        previous_printer = Some(synthetic);
                     }
+                    was_present = false;
                 }
                 Err(e) => {
                     consecutive_errors += 1;
@@ -550,15 +574,19 @@ impl PrinterMonitor {
     where
         F: FnMut(&crate::PropertyChange) + Send,
     {
-        let property_name = property.as_str();
         info!(
             "Starting property '{}' monitoring for printer: {}",
-            property_name, printer_name
+            property.as_str(),
+            printer_name
         );
 
+        // Compare against the typed `MonitorableProperty`, not its `&str`
+        // tag. `PropertyChange::property` is an exhaustive match on both
+        // enums, so any future variant drift becomes a compile error
+        // rather than a silent "this property never fires" runtime hole.
         self.monitor_printer_changes(printer_name, interval_ms, cancel_token, move |changes| {
             for change in &changes.changes {
-                if change.property_name() == property_name {
+                if change.property() == property {
                     callback(change);
                 }
             }

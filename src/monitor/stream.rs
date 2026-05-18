@@ -22,10 +22,14 @@ use crate::{PrinterChanges, PropertyChange, Result};
 impl<'a> MonitorBuilder<'a> {
     /// Stream variant of [`MonitorBuilder::run_changes`].
     ///
-    /// Returns a [`Stream`] yielding each [`PrinterChanges`] as the monitor
-    /// detects them. The stream ends when the monitor loop exits (either
-    /// because the [`CancellationToken`] was cancelled, the backend failed
-    /// past the consecutive-error tolerance, or the receiver was dropped).
+    /// Returns a [`Stream`] yielding `Result<PrinterChanges>` as the
+    /// monitor detects changes. Successful diffs arrive as `Ok(...)`; a
+    /// terminal `Err(...)` is emitted exactly once when the monitor exits
+    /// because of sustained backend failure (more than
+    /// `MAX_CONSECUTIVE_MONITOR_ERRORS` consecutive WMI/CUPS errors), or
+    /// the `wait_for_appearance=false` pre-check failed. The stream then
+    /// closes. A clean shutdown (cancellation, receiver drop) closes the
+    /// stream without emitting an error.
     ///
     /// The returned future drives the monitor in a background task spawned
     /// onto the current tokio runtime; the caller doesn't need to spawn
@@ -41,75 +45,94 @@ impl<'a> MonitorBuilder<'a> {
     /// # async fn _docs() {
     /// let monitor = PrinterMonitor::new().await.unwrap();
     /// let mut stream = monitor.monitor("HP LaserJet").run_changes_stream();
-    /// while let Some(changes) = stream.next().await {
-    ///     println!("changes: {}", changes.summary());
+    /// while let Some(item) = stream.next().await {
+    ///     match item {
+    ///         Ok(changes) => println!("changes: {}", changes.summary()),
+    ///         Err(e) => eprintln!("monitor stopped: {}", e),
+    ///     }
     /// }
     /// # }
     /// ```
-    pub fn run_changes_stream(self) -> impl Stream<Item = PrinterChanges> + Send + 'static {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<PrinterChanges>();
-
-        // When the `events` feature is on AND the caller opted in via
-        // `with_events(true)`, route through the platform-specific event
-        // subscription (WMI on Windows, CUPS D-Bus on unix). Otherwise
-        // fall through to polling.
-        #[cfg(all(windows, feature = "events"))]
-        if self.use_events {
-            super::events::spawn_event_subscription(tx, self.printer_name, self.cancel_token);
-            return UnboundedReceiverStream::new(rx);
-        }
-        #[cfg(all(unix, feature = "events"))]
-        if self.use_events {
-            super::events_cups::spawn_cups_subscription(
-                tx,
-                self.printer_name,
-                self.cancel_token,
-                self.monitor.clone(),
-            );
-            return UnboundedReceiverStream::new(rx);
-        }
-        #[cfg(not(any(all(windows, feature = "events"), all(unix, feature = "events"))))]
-        if self.use_events {
-            warn!(
-                "MonitorBuilder::with_events(true) requires the `events` cargo feature; falling back to polling"
-            );
-        }
+    pub fn run_changes_stream(self) -> impl Stream<Item = Result<PrinterChanges>> + Send + 'static {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<PrinterChanges>>();
 
         let monitor = self.monitor.clone();
         let printer_name = self.printer_name;
         let interval_ms = self.interval_ms;
         let cancel_token = self.cancel_token;
         let wait_for_appearance = self.wait_for_appearance;
+        let use_events = self.use_events;
 
         tokio::spawn(async move {
-            if !wait_for_appearance {
-                match monitor.backend.find_printer(&printer_name).await {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        warn!(
-                            "Printer '{}' not present and wait_for_appearance=false; stream ending",
-                            printer_name
-                        );
-                        return;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed pre-check for printer '{}': {}; stream ending",
-                            printer_name, e
-                        );
+            // Pre-check is applied uniformly to BOTH the polling and the
+            // event-driven paths. Before this was only applied to polling,
+            // so `with_events(true).wait_for_appearance(false)` would
+            // happily subscribe to events for a printer that doesn't exist
+            // and leave the stream silent forever.
+            if !wait_for_appearance && !pre_check_present(&monitor, &printer_name, &tx).await {
+                return;
+            }
+
+            // When the `events` feature is on AND the caller opted in via
+            // `with_events(true)`, route through the platform-specific
+            // event subscription. Otherwise fall through to polling. The
+            // _ = use_events suppresses the unused-variable warning on
+            // targets where neither cfg branch consumes it.
+            #[cfg(all(windows, feature = "events"))]
+            if use_events {
+                let (event_tx, mut event_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<PrinterChanges>();
+                super::events::spawn_event_subscription(
+                    event_tx,
+                    printer_name.clone(),
+                    cancel_token,
+                );
+                while let Some(changes) = event_rx.recv().await {
+                    if tx.send(Ok(changes)).is_err() {
                         return;
                     }
                 }
+                return;
             }
+            #[cfg(all(unix, feature = "events"))]
+            if use_events {
+                let (event_tx, mut event_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<PrinterChanges>();
+                super::events_cups::spawn_cups_subscription(
+                    event_tx,
+                    printer_name.clone(),
+                    cancel_token,
+                    monitor.clone(),
+                );
+                while let Some(changes) = event_rx.recv().await {
+                    if tx.send(Ok(changes)).is_err() {
+                        return;
+                    }
+                }
+                return;
+            }
+            #[cfg(not(any(all(windows, feature = "events"), all(unix, feature = "events"))))]
+            if use_events {
+                warn!(
+                    "MonitorBuilder::with_events(true) requires the `events` cargo feature; falling back to polling"
+                );
+            }
+            let _ = use_events;
 
             let tx_cb = tx.clone();
-            let _ = monitor
+            let result = monitor
                 .monitor_printer_changes(&printer_name, interval_ms, cancel_token, move |changes| {
                     // Receiver drop is the normal way callers terminate the
                     // stream; quietly swallow the SendError.
-                    let _ = tx_cb.send(changes.clone());
+                    let _ = tx_cb.send(Ok(changes.clone()));
                 })
                 .await;
+            // Forward sustained backend failure as the stream's final
+            // item; callers can otherwise not distinguish "cancelled
+            // gracefully" from "WMI/CUPS service died".
+            if let Err(e) = result {
+                let _ = tx.send(Err(e));
+            }
         });
 
         UnboundedReceiverStream::new(rx)
@@ -124,16 +147,15 @@ impl<'a> MonitorBuilder<'a> {
     /// semantics).
     pub fn run_property_stream(
         self,
-    ) -> Result<impl Stream<Item = PropertyChange> + Send + 'static> {
+    ) -> Result<impl Stream<Item = Result<PropertyChange>> + Send + 'static> {
         let property = self.property_filter.clone().ok_or_else(|| {
             crate::PrinterError::Other(
                 "MonitorBuilder::run_property_stream requires filter_property(...) to be set"
                     .to_string(),
             )
         })?;
-        let property_name = property.as_str().to_string();
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<PropertyChange>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<PropertyChange>>();
         let monitor = self.monitor.clone();
         let printer_name = self.printer_name;
         let interval_ms = self.interval_ms;
@@ -141,25 +163,59 @@ impl<'a> MonitorBuilder<'a> {
         let wait_for_appearance = self.wait_for_appearance;
 
         tokio::spawn(async move {
-            if !wait_for_appearance {
-                match monitor.backend.find_printer(&printer_name).await {
-                    Ok(Some(_)) => {}
-                    Ok(None) | Err(_) => return,
-                }
+            if !wait_for_appearance && !pre_check_present(&monitor, &printer_name, &tx).await {
+                return;
             }
 
             let tx_cb = tx.clone();
-            let _ = monitor
+            let result = monitor
                 .monitor_printer_changes(&printer_name, interval_ms, cancel_token, move |changes| {
                     for change in &changes.changes {
-                        if change.property_name() == property_name {
-                            let _ = tx_cb.send(change.clone());
+                        if change.property() == property {
+                            let _ = tx_cb.send(Ok(change.clone()));
                         }
                     }
                 })
                 .await;
+            if let Err(e) = result {
+                let _ = tx.send(Err(e));
+            }
         });
 
         Ok(UnboundedReceiverStream::new(rx))
+    }
+}
+
+/// Shared pre-check used by both stream terminal methods when
+/// `wait_for_appearance` is `false`. Returns `true` if the caller should
+/// continue (printer exists), `false` if the stream should end. On the
+/// "should end" path, a typed error is forwarded through `tx` so callers
+/// reading the stream can distinguish "printer missing at startup" from
+/// "backend query failed during pre-check" from "cancelled".
+async fn pre_check_present<T>(
+    monitor: &super::PrinterMonitor,
+    printer_name: &str,
+    tx: &tokio::sync::mpsc::UnboundedSender<Result<T>>,
+) -> bool {
+    match monitor.backend.find_printer(printer_name).await {
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            warn!(
+                "Printer '{}' not present and wait_for_appearance=false; stream ending",
+                printer_name
+            );
+            let _ = tx.send(Err(crate::PrinterError::PrinterNotFound(
+                printer_name.to_string(),
+            )));
+            false
+        }
+        Err(e) => {
+            warn!(
+                "Failed pre-check for printer '{}': {}; stream ending",
+                printer_name, e
+            );
+            let _ = tx.send(Err(e));
+            false
+        }
     }
 }

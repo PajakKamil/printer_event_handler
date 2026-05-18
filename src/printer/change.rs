@@ -1,3 +1,5 @@
+use crate::monitor::MonitorableProperty;
+
 use super::error_state::ErrorState;
 use super::state::PrinterState;
 use super::status::PrinterStatus;
@@ -58,24 +60,41 @@ pub enum PropertyChange {
 }
 
 impl PropertyChange {
-    /// Returns the name of the property that changed
-    pub fn property_name(&self) -> &'static str {
+    /// Returns the [`MonitorableProperty`] this change corresponds to.
+    ///
+    /// The mapping is exhaustive on both enums, so adding a `PropertyChange`
+    /// variant without the matching `MonitorableProperty` variant becomes a
+    /// compile error. This is load-bearing - the old string-keyed
+    /// `property_name` returned `&str`, which let the two enums silently
+    /// drift apart and made new variants invisible to `monitor_property`.
+    pub fn property(&self) -> MonitorableProperty {
         match self {
-            PropertyChange::Name { .. } => "Name",
-            PropertyChange::Status { .. } => "Status",
-            PropertyChange::State { .. } => "State",
-            PropertyChange::ErrorState { .. } => "ErrorState",
-            PropertyChange::IsOffline { .. } => "IsOffline",
-            PropertyChange::IsDefault { .. } => "IsDefault",
-            PropertyChange::PrinterStatusCode { .. } => "PrinterStatusCode",
-            PropertyChange::PrinterStateCode { .. } => "PrinterStateCode",
-            PropertyChange::DetectedErrorStateCode { .. } => "DetectedErrorStateCode",
-            PropertyChange::ExtendedDetectedErrorStateCode { .. } => {
-                "ExtendedDetectedErrorStateCode"
+            PropertyChange::Name { .. } => MonitorableProperty::Name,
+            PropertyChange::Status { .. } => MonitorableProperty::Status,
+            PropertyChange::State { .. } => MonitorableProperty::State,
+            PropertyChange::ErrorState { .. } => MonitorableProperty::ErrorState,
+            PropertyChange::IsOffline { .. } => MonitorableProperty::IsOffline,
+            PropertyChange::IsDefault { .. } => MonitorableProperty::IsDefault,
+            PropertyChange::PrinterStatusCode { .. } => MonitorableProperty::PrinterStatusCode,
+            PropertyChange::PrinterStateCode { .. } => MonitorableProperty::PrinterStateCode,
+            PropertyChange::DetectedErrorStateCode { .. } => {
+                MonitorableProperty::DetectedErrorStateCode
             }
-            PropertyChange::ExtendedPrinterStatusCode { .. } => "ExtendedPrinterStatusCode",
-            PropertyChange::WmiStatus { .. } => "WmiStatus",
+            PropertyChange::ExtendedDetectedErrorStateCode { .. } => {
+                MonitorableProperty::ExtendedDetectedErrorStateCode
+            }
+            PropertyChange::ExtendedPrinterStatusCode { .. } => {
+                MonitorableProperty::ExtendedPrinterStatusCode
+            }
+            PropertyChange::WmiStatus { .. } => MonitorableProperty::WmiStatus,
         }
+    }
+
+    /// String tag for this change's property. Convenience wrapper around
+    /// [`Self::property`] + [`MonitorableProperty::as_str`] - kept for
+    /// callers that log or serialise change types as strings.
+    pub fn property_name(&self) -> &'static str {
+        self.property().as_str()
     }
 
     /// Returns a human-readable description of the change

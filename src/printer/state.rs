@@ -32,6 +32,15 @@ pub(crate) const PRINTER_STATE_DOOR_OPEN: u32 = 4_194_304;
 pub(crate) const PRINTER_STATE_SERVER_UNKNOWN: u32 = 8_388_608;
 pub(crate) const PRINTER_STATE_POWER_SAVE: u32 = 16_777_216;
 
+/// Win32_Printer.ExtendedPrinterStatus value meaning "Offline". Documented
+/// alongside the other ExtendedPrinterStatus values (1=Other, 2=Unknown,
+/// 3=Idle, 4=Printing, 5=Warmup, 6=StoppedPrinting, 7=Offline, ...).
+/// Named here so the WMI conversion path and the description table share a
+/// single source of truth. Windows-only because ExtendedPrinterStatus is a
+/// WMI concept; on other targets the const has no callers.
+#[cfg(windows)]
+pub(crate) const EXTENDED_PRINTER_STATUS_OFFLINE: u32 = 7;
+
 /// Represents a printer's state using .NET PrintQueueStatus flags
 ///
 /// This enum represents the actual WMI PrinterState values which correspond to
